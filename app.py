@@ -151,9 +151,9 @@ def start_command(message):
         return
     
     welcome_text = """
-    به ربات مدیریت باشگاه مبارزات خوش آمدید!
-    لطفا ابتدا وارد شوید.
-    """
+به ربات مدیریت باشگاه مبارزات خوش آمدید!
+لطفا ابتدا وارد شوید.
+"""
     bot.send_message(chat_id, welcome_text, reply_markup=login_menu())
 
 @bot.message_handler(func=lambda message: message.text == 'ورود به سیستم')
@@ -202,9 +202,9 @@ def logout_command(message):
 def send_welcome(message):
     chat_id = message.chat.id
     welcome_text = """
-    به ربات مدیریت باشگاه مبارزات خوش آمدید!
-    لطفاً یکی از گزینه‌ها را انتخاب کنید.
-    """
+به ربات مدیریت باشگاه مبارزات خوش آمدید!
+لطفاً یکی از گزینه‌ها را انتخاب کنید.
+"""
     bot.send_message(chat_id, welcome_text, reply_markup=main_menu())
 
 @bot.message_handler(func=lambda message: message.text == 'نمایش مبارزین')
@@ -247,9 +247,9 @@ def show_fighters(message):
         if conn:
             conn.close()
 
-@bot.message_handler(func=lambda message: message.text == 'نمایش اعضا')
+@bot.message_handler(func=lambda message: message.text == 'نمایش باشگاه‌ها')
 @login_required
-def show_members(message):
+def show_gyms(message):
     conn = get_db_connection()
     if conn is None:
         bot.send_message(message.chat.id, "خطا در اتصال به پایگاه داده.")
@@ -258,25 +258,23 @@ def show_members(message):
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, full_name, phone, email, join_date 
-            FROM members 
-            WHERE is_active = TRUE 
-            ORDER BY full_name
+            SELECT gym_id, name, location, owner, reputation_score
+            FROM gym
+            ORDER BY name
         """)
-        members = cur.fetchall()
+        gyms = cur.fetchall()
         
-        if not members:
-            bot.send_message(message.chat.id, "هیچ عضوی ثبت نشده است.")
+        if not gyms:
+            bot.send_message(message.chat.id, "هیچ باشگاهی ثبت نشده است.")
             return
         
-        response = "لیست اعضای کتابخانه:\n\n"
-        for member in members:
-            join_date = member[4].strftime('%Y-%m-%d')
-            response += f"{member[1]}\n"
-            response += f"تلفن: {member[2] or 'ثبت نشده'}\n"
-            response += f"ایمیل: {member[3] or 'ثبت نشده'}\n"
-            response += f"تاریخ عضویت: {join_date}\n"
-            response += f"کد عضو: {member[0]}\n"
+        response = "لیست باشگاه‌ها:\n\n"
+        for gym in gyms:
+            response += f"{gym[1]}\n"
+            response += f"شناسه باشگاه: {gym[0]}\n"
+            response += f"مکان: {gym[2]}\n"
+            response += f"مالک: {gym[3]}\n"
+            response += f"امتیاز شهرت: {gym[4]}\n"
             response += "-" * 30 + "\n"
         
         bot.send_message(message.chat.id, response, parse_mode='Markdown')
@@ -287,65 +285,160 @@ def show_members(message):
         if conn:
             conn.close()
 
-@bot.message_handler(func=lambda message: message.text == 'اضافه کردن عضو')
+@bot.message_handler(func=lambda message: message.text == 'نمایش مربی‌ها')
 @login_required
-def add_member_command(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً نام کامل عضو جدید را وارد کنید:")
-    bot.register_next_step_handler(msg, process_member_name)
-
-def process_member_name(message):
-    chat_id = message.chat.id
-    full_name = message.text.strip()
-    
-    if not full_name or len(full_name) < 2:
-        bot.send_message(chat_id, "نام وارد شده معتبر نیست. لطفاً دوباره تلاش کنید.")
-        return
-    
-    msg = bot.send_message(chat_id, "لطفاً شماره تلفن عضو را وارد کنید (اختیاری):")
-    bot.register_next_step_handler(msg, process_member_phone, full_name)
-
-def process_member_phone(message, full_name):
-    chat_id = message.chat.id
-    phone = message.text.strip() if message.text else None
-    
-    msg = bot.send_message(chat_id, "لطفاً ایمیل عضو را وارد کنید:")
-    bot.register_next_step_handler(msg, process_member_email, full_name, phone)
-
-def process_member_email(message, full_name, phone):
-    chat_id = message.chat.id
-    email = message.text.strip() if message.text else None
-    
-    msg = bot.send_message(chat_id, "لطفاً آدرس عضو را وارد کنید:")
-    bot.register_next_step_handler(msg, process_member_address, full_name, phone, email)
-
-def process_member_address(message, full_name, phone, email):
-    chat_id = message.chat.id
-    address = message.text.strip() if message.text else None
-    
+def show_trainers(message):
     conn = get_db_connection()
     if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        bot.send_message(message.chat.id, "خطا در اتصال به پایگاه داده.")
         return
     
     try:
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO members (full_name, phone, email, address)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id
-        """, (full_name, phone, email, address))
+            SELECT t.trainer_id, t.name as trainer_name, t.specialty, g.name as gym_name
+            FROM trainer
+            LEFT JOIN gym g ON t.gym_id = g.gym_id
+            ORDER BY t.name
+        """)
+        trainers = cur.fetchall()
         
-        member_id = cur.fetchone()[0]
-        conn.commit()
+        if not trainers:
+            bot.send_message(message.chat.id, "هیچ باشگاهی ثبت نشده است.")
+            return
         
-        bot.send_message(chat_id, f"عضو جدید با موفقیت ثبت شد!\nکد عضویت: {member_id}")
+        response = "لیست باشگاه‌ها:\n\n"
+        for trainer in trainers:
+            response += f"{trainer[1]}\n"
+            response += f"شناسه مربی: {trainer[0]}\n"
+            response += f"تخصص: {trainer[2]}\n"
+            response += f"باشگاه: {trainer[3] or 'ثبت نشده'}\n"
+            response += "-" * 30 + "\n"
+        
+        bot.send_message(message.chat.id, response, parse_mode='Markdown')
         cur.close()
     except Error as e:
-        bot.send_message(chat_id, f"خطا در ثبت عضو: {e}")
+        bot.send_message(message.chat.id, f"خطا در دریافت اطلاعات: {e}")
     finally:
         if conn:
             conn.close()
+
+def get_gym_id_by_name(gym_name):
+    connection = get_db_connection()
+    if not connection:
+        return None
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT gym_id FROM gym WHERE name = %s;",
+            (gym_name,)
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except Error as e:
+        print(f"DB error: {e}")
+        return None
+    finally:
+        cursor.close()
+        connection.close()
+
+@bot.message_handler(func=lambda message: message.text == 'اضافه کردن مبارز')
+@login_required
+def add_member_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "نام مبارز جدید را وارد کنید:")
+    bot.register_next_step_handler(msg, process_fighter_name)
+
+def process_fighter_name(message):
+    chat_id = message.chat.id
+    full_name = message.text.strip()
+    
+    if not full_name or len(full_name) < 3:
+        msg = bot.send_message(chat_id, "نام وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید.")
+        bot.register_next_step_handler(msg, process_fighter_name)
+        return
+    
+    msg = bot.send_message(chat_id, "لطفاً نام مستعار مبارز را وارد کنید (اختیاری):")
+    bot.register_next_step_handler(msg, process_fighter_nickname, full_name)
+
+def process_fighter_nickname(message, full_name):
+    chat_id = message.chat.id
+    nickname = message.text.strip() if message.text else None
+    
+    msg = bot.send_message(chat_id, "لطفاً رده وزنی مبارز را وارد کنید:")
+    bot.register_next_step_handler(msg, process_fighter_weight_class, full_name, nickname)
+
+def process_fighter_weight_class(message, full_name, nickname):
+    chat_id = message.chat.id
+    weight_class = message.text.strip()
+
+    if not weight_class:
+        msg = bot.send_message(chat_id, "رده وزنی وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید.")
+        bot.register_next_step_handler(msg, process_fighter_weight_class, full_name, nickname)
+        return
+    
+    msg = bot.send_message(chat_id, "لطفاً سن مبارز را وارد کنید:")
+    bot.register_next_step_handler(msg, process_fighter_age, full_name, nickname, weight_class)
+
+def process_fighter_age(message, full_name, nickname, weight_class):
+    chat_id = message.chat.id
+    age = message.text.strip()
+
+    if not age.isdigit() or int(age) <= 0 or not age:
+        msg = bot.send_message(chat_id, "سن وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید.")
+        bot.register_next_step_handler(msg, process_fighter_age, full_name, nickname, weight_class)
+        return
+    
+    msg = bot.send_message(chat_id, "لطفاً ملیت مبارز را وارد کنید:")
+    bot.register_next_step_handler(msg, process_fighter_nationality, full_name, nickname, weight_class, age)
+
+def process_fighter_nationality(message, full_name, nickname, weight_class, age):
+    chat_id = message.chat.id
+    nationality = message.text.strip() if message.text else None
+    
+    msg = bot.send_message(chat_id, "لطفاً نام باشگاه مبارز را وارد کنید:")
+    bot.register_next_step_handler(msg, process_fighter_gym, full_name, nickname, weight_class, age, nationality)
+
+def process_fighter_gym(message, full_name, nickname, weight_class, age, nationality):
+    chat_id = message.chat.id
+    gym_name = message.text.strip() if message.text else None
+
+    if not gym_name:
+        msg = bot.send_message(chat_id, "نام وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید:")
+        bot.register_next_step_handler(msg, process_fighter_gym, full_name, nickname, weight_class, age, nationality)
+        return
+    
+    gym_id = get_gym_id_by_name(gym_name)
+
+    if gym_id is None:
+        msg = bot.send_message(chat_id, "چنین باشگاهی ثبت نشده است. لطفاً نام باشگاه را مجدداً وارد کنید:")
+        bot.register_next_step_handler(msg, process_fighter_gym, full_name, nickname, weight_class, age, nationality)
+        return
+    else:
+        conn = get_db_connection()
+        if conn is None:
+            bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+            return
+        
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO fighter (name, nickname, weight_class, age, nationality, gym_id)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING fighter_id
+            """, (full_name, nickname, weight_class, age, nationality, gym_id))
+
+            fighter_id = cur.fetchone()[0]
+            conn.commit()
+
+            bot.send_message(chat_id, f"مبارز جدید با موفقیت ثبت شد!\nشناسه مبارز: {fighter_id}")
+            cur.close()
+        except Error as e:
+            bot.send_message(chat_id, f"خطا در ثبت مبارز: {e}")
+        finally:
+            if conn:
+                conn.close()
 
 @bot.message_handler(func=lambda message: message.text == 'اضافه کردن کتاب')
 @login_required
