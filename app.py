@@ -219,7 +219,7 @@ def show_fighters(message):
         cur = conn.cursor()
         cur.execute("""
             SELECT fighter_id, name, nickname, weight_class, age, nationality, status
-            FROM fighters 
+            FROM fighter
             ORDER BY name
         """)
         fighters = cur.fetchall()
