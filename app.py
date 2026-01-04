@@ -312,10 +312,10 @@ def show_trainers(message):
         trainers = cur.fetchall()
         
         if not trainers:
-            bot.send_message(message.chat.id, "هیچ باشگاهی ثبت نشده است.")
+            bot.send_message(message.chat.id, "هیچ مربی‌ای ثبت نشده است.")
             return
-        
-        response = "لیست باشگاه‌ها:\n\n"
+
+        response = "لیست مربی‌ها:\n\n"
         for trainer in trainers:
             response += f"{trainer[1]}\n"
             response += f"شناسه مربی: {trainer[0]}\n"
@@ -367,7 +367,7 @@ def cancel_process(message):
 @login_required
 def add_member_command(message):
     chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "نام مبارز جدید را وارد کنید:", reply_markup=cancel_keyboard())
+    msg = bot.send_message(chat_id, "لطفاً نام مبارز جدید را وارد کنید:", reply_markup=cancel_keyboard())
     bot.register_next_step_handler(msg, process_fighter_name)
 
 def process_fighter_name(message):
@@ -474,10 +474,10 @@ def process_fighter_gym(message, full_name, nickname, weight_class, age, nationa
             fighter_id = cur.fetchone()[0]
             conn.commit()
 
-            bot.send_message(chat_id, f"مبارز جدید با موفقیت ثبت شد!\nشناسه مبارز: {fighter_id}")
+            bot.send_message(chat_id, f"مبارز جدید با موفقیت ثبت شد!\nشناسه مبارز: {fighter_id}", reply_markup=main_menu())
             cur.close()
         except Error as e:
-            bot.send_message(chat_id, f"خطا در ثبت مبارز:\n{e}")
+            bot.send_message(chat_id, f"خطا در ثبت مبارز:\n{e}", reply_markup=main_menu())
         finally:
             if conn:
                 conn.close()
