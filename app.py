@@ -1,3 +1,5 @@
+# region ---------------------------- Imports ----------------------------
+
 import telebot
 from telebot import types
 import psycopg2
@@ -6,20 +8,21 @@ from datetime import datetime, timedelta
 import os
 from functools import wraps
 
-# region ----- Environment Variables -----
+# endregion
+
+# region --------------------- Environment Variables ---------------------
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DB_URI = os.environ.get("DB_URI")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")  
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")  
 
-# endregion
-
 bot = telebot.TeleBot(BOT_TOKEN) # type: ignore
-
 user_sessions = {}
 
-# region ----- Starting Methods -----
+# endregion
+
+# region ----------------------- Starting Methods -----------------------
 
 def check_login(chat_id):
     return user_sessions.get(chat_id, False)
@@ -118,6 +121,10 @@ def create_tables():
         if connection:
             connection.close()
 
+# endregion
+
+# region ----------------------- Helper Functions -----------------------
+
 def translate_to_english(text):
     arabic_numbers = '٠١٢٣٤٥٦٧٨٩'
     persian_numbers = '۰١٢٣٤٥٦٧٨٩'
@@ -125,6 +132,50 @@ def translate_to_english(text):
     
     translation_table = str.maketrans(persian_numbers + arabic_numbers, english_numbers * 2)
     return text.translate(translation_table)
+
+def get_gym_id_by_name(gym_name):
+    connection = get_db_connection()
+    if not connection:
+        return None
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT gym_id FROM gym WHERE name = %s;",
+            (gym_name,)
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except Error as e:
+        print(f"DB error: {e}")
+        return None
+    finally:
+        cursor.close() # type: ignore
+        connection.close()
+
+def get_fighter_id_by_name(fighter_name):
+    connection = get_db_connection()
+    if not connection:
+        return None
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT fighter_id FROM fighter WHERE name = %s;",
+            (fighter_name,)
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except Error as e:
+        print(f"DB error: {e}")
+        return None
+    finally:
+        cursor.close() # type: ignore
+        connection.close()
+
+#endregion
+
+# region --------------------------- Buttons ----------------------------
 
 def login_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
@@ -141,10 +192,10 @@ def main_menu():
     button5 = types.KeyboardButton('اضافه کردن مبارز')
     button6 = types.KeyboardButton('اضافه کردن باشگاه')
     button7 = types.KeyboardButton('اضافه کردن مربی')
-    button8 = types.KeyboardButton('جست‌وجوی مبارز')
-    button9 = types.KeyboardButton('جست‌وجوی باشگاه')
-    button10 = types.KeyboardButton('جست‌وجوی مربی')
-    button11 = types.KeyboardButton('اضافه کردن رویداد')
+    button8 = types.KeyboardButton('اضافه کردن رویداد')
+    button9 = types.KeyboardButton('جست‌وجوی مبارز')
+    button10 = types.KeyboardButton('جست‌وجوی باشگاه')
+    button11 = types.KeyboardButton('جست‌وجوی مربی')
     button12 = types.KeyboardButton('ویرایش مبارز')
     button13 = types.KeyboardButton('ویرایش باشگاه')
     button14 = types.KeyboardButton('ویرایش مربی')
@@ -160,6 +211,15 @@ def search_menu():
     button2 = types.KeyboardButton('بازگشت به منوی اصلی')
     markup.add(button1, button2)
     return markup
+
+def cancel_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    markup.add(types.KeyboardButton("لغو عملیات"))
+    return markup
+
+# endregion
+
+# region ------------------------ Start Handlers ------------------------
 
 @bot.message_handler(commands=['start', 'login'])
 def start_command(message):
@@ -226,7 +286,21 @@ def send_welcome(message):
 """
     bot.send_message(chat_id, welcome_text, reply_markup=main_menu())
 
-# region ----- View Handlers -----
+@bot.message_handler(func=lambda m: m.text == "لغو عملیات")
+def cancel_process(message):
+    chat_id = message.chat.id
+
+    bot.clear_step_handler_by_chat_id(chat_id)
+    bot.send_message(chat_id, "عملیات لغو شد.", reply_markup=main_menu())
+
+@bot.message_handler(func=lambda message: message.text == 'بازگشت به منوی اصلی')
+@login_required
+def back_to_main_menu(message):
+    send_welcome(message)
+
+# endregion
+
+# region ----------------------- Display Handlers -----------------------
 
 @bot.message_handler(func=lambda message: message.text == 'نمایش مبارزین')
 @login_required
@@ -298,6 +372,19 @@ def show_gyms(message):
             response += f"مکان: {gym[2]}\n"
             response += f"مالک: {gym[3]}\n"
             response += f"امتیاز شهرت: {gym[4]}\n"
+
+            cur.execute("""
+                SELECT COUNT(*) FROM fighter WHERE gym_id = %s
+            """, (gym[0],))
+            fighter_count = cur.fetchone()[0] # type: ignore
+            
+            cur.execute("""
+                SELECT COUNT(*) FROM trainer WHERE gym_id = %s
+            """, (gym[0],))
+            trainer_count = cur.fetchone()[0] # type: ignore
+            
+            response += f"تعداد مبارزین: {fighter_count}\n"
+            response += f"تعداد مربیان: {trainer_count}\n"
             response += "-" * 40 + "\n"
         
         bot.send_message(message.chat.id, response, parse_mode='Markdown')
@@ -337,6 +424,13 @@ def show_trainers(message):
             response += f"شناسه مربی: {trainer[0]}\n"
             response += f"تخصص: {trainer[2]}\n"
             response += f"باشگاه: {trainer[3] or 'ثبت نشده'}\n"
+
+            cur.execute("""
+                SELECT COUNT(*) FROM fighter_trainer WHERE trainer_id = %s
+            """, (trainer[0],))
+            fighter_count = cur.fetchone()[0] # type: ignore
+            
+            response += f"تعداد شاگردان: {fighter_count}\n"
             response += "-" * 40 + "\n"
         
         bot.send_message(message.chat.id, response, parse_mode='Markdown')
@@ -359,7 +453,7 @@ def show_events(message):
         cur = conn.cursor()
         cur.execute("""
             SELECT me.match_id, me.start_date, me.location, 
-                   STRING_AGG(CONCAT(f.name, ' (', p.result, ')'), ' vs ') as participants
+            STRING_AGG(CONCAT(f.name, ' (', p.result, ')'), ' vs ') as participants
             FROM match_event me
             LEFT JOIN participants p ON me.match_id = p.match_id
             LEFT JOIN fighter f ON p.fighter_id = f.fighter_id
@@ -391,43 +485,15 @@ def show_events(message):
 
 # endregion
 
-def get_gym_id_by_name(gym_name):
-    connection = get_db_connection()
-    if not connection:
-        return None
+# region ------------------------- Add Handlers -------------------------
 
-    try:
-        cursor = connection.cursor()
-        cursor.execute(
-            "SELECT gym_id FROM gym WHERE name = %s;",
-            (gym_name,)
-        )
-        row = cursor.fetchone()
-        return row[0] if row else None
-    except Error as e:
-        print(f"DB error: {e}")
-        return None
-    finally:
-        cursor.close() # type: ignore
-        connection.close()
-
-def cancel_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-    markup.add(types.KeyboardButton("لغو عملیات"))
-    return markup
-
-@bot.message_handler(func=lambda m: m.text == "لغو عملیات")
-def cancel_process(message):
-    chat_id = message.chat.id
-
-    bot.clear_step_handler_by_chat_id(chat_id)
-    bot.send_message(chat_id, "عملیات لغو شد.", reply_markup=main_menu())
+# region ----------- Add Fighter Handler -----------
 
 @bot.message_handler(func=lambda message: message.text == 'اضافه کردن مبارز')
 @login_required
 def add_fighter_command(message):
     chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً نام مبارز جدید را وارد کنید:", reply_markup=cancel_keyboard())
+    msg = bot.send_message(chat_id, "لطفاً نام مبارز جدید را وارد کنید:", reply_markup=cancel_menu())
     bot.register_next_step_handler(msg, process_fighter_name)
 
 def process_fighter_name(message):
@@ -506,7 +572,7 @@ def process_fighter_gym(message, full_name, nickname, weight_class, age, nationa
 
     if not gym_name:
         msg = bot.send_message(chat_id, "نام وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید:")
-        reply_markup = cancel_keyboard()
+        reply_markup = cancel_menu()
         bot.register_next_step_handler(msg, process_fighter_gym, full_name, nickname, weight_class, age, nationality)
         return
     
@@ -514,7 +580,7 @@ def process_fighter_gym(message, full_name, nickname, weight_class, age, nationa
 
     if gym_id is None:
         msg = bot.send_message(chat_id, "چنین باشگاهی ثبت نشده است. لطفاً نام باشگاه را مجدداً وارد کنید:")
-        reply_markup = cancel_keyboard()
+        reply_markup = cancel_menu()
         bot.register_next_step_handler(msg, process_fighter_gym, full_name, nickname, weight_class, age, nationality)
         return
     else:
@@ -542,13 +608,15 @@ def process_fighter_gym(message, full_name, nickname, weight_class, age, nationa
             if conn:
                 conn.close()
 
-# ------------------------------ ADD GYM HANDLER ------------------------------
+# endregion
+
+# region ------------- Add Gym Handler -------------
 
 @bot.message_handler(func=lambda message: message.text == 'اضافه کردن باشگاه')
 @login_required
 def add_gym_command(message):
     chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً نام باشگاه را وارد کنید:", reply_markup=cancel_keyboard())
+    msg = bot.send_message(chat_id, "لطفاً نام باشگاه را وارد کنید:", reply_markup=cancel_menu())
     bot.register_next_step_handler(msg, process_gym_name)
 
 def process_gym_name(message):
@@ -620,11 +688,15 @@ def process_gym_owner(message, full_name, location):
         if conn:
             conn.close()
 
+# endregion
+
+# region ----------- Add Trainer Handler -----------
+
 @bot.message_handler(func=lambda message: message.text == 'اضافه کردن مربی')
 @login_required
 def add_trainer_command(message):
     chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً نام مربی را وارد کنید:", reply_markup=cancel_keyboard())
+    msg = bot.send_message(chat_id, "لطفاً نام مربی را وارد کنید:", reply_markup=cancel_menu())
     bot.register_next_step_handler(msg, process_trainer_name)
 
 def process_trainer_name(message):
@@ -665,7 +737,7 @@ def process_trainer_gym(message, full_name, specialty):
 
     if not gym_name:
         msg = bot.send_message(chat_id, "نام وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید:")
-        reply_markup = cancel_keyboard()
+        reply_markup = cancel_menu()
         bot.register_next_step_handler(msg, process_trainer_gym, full_name, specialty)
         return
     
@@ -673,7 +745,7 @@ def process_trainer_gym(message, full_name, specialty):
 
     if gym_id is None:
         msg = bot.send_message(chat_id, "چنین باشگاهی ثبت نشده است. لطفاً نام باشگاه را مجدداً وارد کنید:")
-        reply_markup = cancel_keyboard()
+        reply_markup = cancel_menu()
         bot.register_next_step_handler(msg, process_trainer_gym, full_name, specialty)
         return
     else:
@@ -696,217 +768,20 @@ def process_trainer_gym(message, full_name, specialty):
             bot.send_message(chat_id, f"مربی جدید با موفقیت ثبت شد!\nشناسه مربی: {trainer_id}", reply_markup=main_menu())
             cur.close()
         except Error as e:
-            bot.send_message(chat_id, f"خطا در ثبت مبارز:\n{e}", reply_markup=main_menu())
+            bot.send_message(chat_id, f"خطا در ثبت مربی:\n{e}", reply_markup=main_menu())
         finally:
             if conn:
                 conn.close()
 
-@bot.message_handler(func=lambda message: message.text == 'جست‌وجوی مبارز')
-@login_required
-def search_fighter_menu(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً نام مبارز را برای جست‌وجو وارد کنید:", reply_markup=cancel_keyboard())
-    bot.register_next_step_handler(msg, process_fighter_search)
+# endregion
 
-def process_fighter_search(message):
-    chat_id = message.chat.id
-    search_term = message.text.strip()
-    
-    if search_term == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT f.fighter_id, f.name, f.nickname, f.weight_class, f.age, 
-                   f.nationality, f.status, g.name as gym_name
-            FROM fighter f
-            LEFT JOIN gym g ON f.gym_id = g.gym_id
-            WHERE f.name ILIKE %s OR f.nickname ILIKE %s
-            ORDER BY f.name
-        """, (f'%{search_term}%', f'%{search_term}%'))
-        
-        fighters = cur.fetchall()
-        
-        if not fighters:
-            bot.send_message(chat_id, f"هیچ مبارزی با نام یا نام مستعار '{search_term}' یافت نشد.", reply_markup=main_menu())
-            return
-        
-        response = f"نتایج جست‌وجو برای '{search_term}':\n\n"
-        for fighter in fighters:
-            response += f"**{fighter[1]}**\n"
-            response += f"شناسه مبارز: {fighter[0]}\n"
-            response += f"نام مستعار: {fighter[2] or 'ثبت نشده'}\n"
-            response += f"رده وزنی: {fighter[3]}\n"
-            response += f"سن: {fighter[4]}\n"
-            response += f"ملیت: {fighter[5]}\n"
-            response += f"وضعیت: {fighter[6]}\n"
-            response += f"باشگاه: {fighter[7] or 'ثبت نشده'}\n"
-            response += "-" * 40 + "\n"
-        
-        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در جست‌وجو: {e}", reply_markup=main_menu())
-    finally:
-        if conn:
-            conn.close()
-
-@bot.message_handler(func=lambda message: message.text == 'جست‌وجوی باشگاه')
-@login_required
-def search_gym_menu(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً نام باشگاه یا مکان باشگاه یا نام مالک را برای جست‌وجو وارد کنید:", reply_markup=cancel_keyboard())
-    bot.register_next_step_handler(msg, process_gym_search)
-
-def process_gym_search(message):
-    chat_id = message.chat.id
-    search_term = message.text.strip()
-    
-    if search_term == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT gym_id, name, location, owner, reputation_score
-            FROM gym
-            WHERE name ILIKE %s OR location ILIKE %s OR owner ILIKE %s
-            ORDER BY name
-        """, (f'%{search_term}%', f'%{search_term}%', f'%{search_term}%'))
-        
-        gyms = cur.fetchall()
-        
-        if not gyms:
-            bot.send_message(chat_id, f"هیچ باشگاهی با این نام یا این مکان یا این مالک '{search_term}' یافت نشد.", reply_markup=main_menu())
-            return
-        
-        response = f"نتایج جست‌وجو برای '{search_term}':\n\n"
-        for gym in gyms:
-            response += f"**{gym[1]}**\n"
-            response += f"شناسه باشگاه: {gym[0]}\n"
-            response += f"مکان: {gym[2]}\n"
-            response += f"مالک: {gym[3]}\n"
-            response += f"امتیاز شهرت: {gym[4]}\n"
-            
-            cur.execute("""
-                SELECT COUNT(*) FROM fighter WHERE gym_id = %s
-            """, (gym[0],))
-            fighter_count = cur.fetchone()[0] # type: ignore
-            
-            cur.execute("""
-                SELECT COUNT(*) FROM trainer WHERE gym_id = %s
-            """, (gym[0],))
-            trainer_count = cur.fetchone()[0] # type: ignore
-            
-            response += f"تعداد مبارزین: {fighter_count}\n"
-            response += f"تعداد مربیان: {trainer_count}\n"
-            response += "-" * 40 + "\n"
-        
-        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در جست‌وجو: {e}", reply_markup=main_menu())
-    finally:
-        if conn:
-            conn.close()
-
-@bot.message_handler(func=lambda message: message.text == 'جست‌وجوی مربی')
-@login_required
-def search_trainer_menu(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً نام مربی یا نام تخصص را برای جست‌وجو وارد کنید:", reply_markup=cancel_keyboard())
-    bot.register_next_step_handler(msg, process_trainer_search)
-
-def process_trainer_search(message):
-    chat_id = message.chat.id
-    search_term = message.text.strip()
-    
-    if search_term == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT t.trainer_id, t.name, t.specialty, g.name as gym_name
-            FROM trainer t
-            LEFT JOIN gym g ON t.gym_id = g.gym_id
-            WHERE t.name ILIKE %s OR t.specialty ILIKE %s
-            ORDER BY t.name
-        """, (f'%{search_term}%', f'%{search_term}%'))
-        
-        trainers = cur.fetchall()
-        
-        if not trainers:
-            bot.send_message(chat_id, f"هیچ مربی‌ای با این نام یا این تخصص '{search_term}' یافت نشد.", reply_markup=main_menu())
-            return
-        
-        response = f"نتایج جست‌وجو برای '{search_term}':\n\n"
-        for trainer in trainers:
-            response += f"**{trainer[1]}**\n"
-            response += f"شناسه مربی: {trainer[0]}\n"
-            response += f"تخصص: {trainer[2]}\n"
-            response += f"باشگاه: {trainer[3] or 'ثبت نشده'}\n"
-            
-            cur.execute("""
-                SELECT COUNT(*) FROM fighter_trainer WHERE trainer_id = %s
-            """, (trainer[0],))
-            fighter_count = cur.fetchone()[0] # type: ignore
-            
-            response += f"تعداد شاگردان: {fighter_count}\n"
-            response += "-" * 40 + "\n"
-        
-        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در جست‌وجو: {e}", reply_markup=main_menu())
-    finally:
-        if conn:
-            conn.close()
-
-def get_fighter_id_by_name(fighter_name):
-    connection = get_db_connection()
-    if not connection:
-        return None
-
-    try:
-        cursor = connection.cursor()
-        cursor.execute(
-            "SELECT fighter_id FROM fighter WHERE name = %s;",
-            (fighter_name,)
-        )
-        row = cursor.fetchone()
-        return row[0] if row else None
-    except Error as e:
-        print(f"DB error: {e}")
-        return None
-    finally:
-        cursor.close() # type: ignore
-        connection.close()
+# region ------------ Add Event Handler ------------
 
 @bot.message_handler(func=lambda message: message.text == 'اضافه کردن رویداد')
 @login_required
 def add_event_command(message):
     chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً تاریخ و زمان شروع رویداد را وارد کنید (فرمت: YYYY-MM-DD HH:MM):", reply_markup=cancel_keyboard())
+    msg = bot.send_message(chat_id, "لطفاً تاریخ و زمان شروع رویداد را وارد کنید (فرمت: YYYY-MM-DD HH:MM):", reply_markup=cancel_menu())
     bot.register_next_step_handler(msg, process_event_start_date)
 
 def process_event_start_date(message):
@@ -918,7 +793,6 @@ def process_event_start_date(message):
         return
     
     try:
-        # Parse the date
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d %H:%M")
         
         msg = bot.send_message(chat_id, "لطفاً مکان رویداد را وارد کنید:")
@@ -976,7 +850,6 @@ def process_event_fighter2(message, start_date, location, fighter1_id, fighter1_
         bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
         return
     
-    # Check if same fighter
     if fighter2_id == fighter1_id:
         msg = bot.send_message(chat_id, "یک مبارز نمی‌تواند با خودش مبارزه کند! لطفاً مبارز دیگری را وارد کنید:")
         bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
@@ -1088,10 +961,206 @@ def process_event_result(message, start_date, location, fighter1_id, fighter1_na
         if conn:
             conn.close()
 
-@bot.message_handler(func=lambda message: message.text == 'بازگشت به منوی اصلی')
+# endregion
+
+# endregion
+
+# region ------------------------ Search Handlers -----------------------
+
+# region ---------- Search Fighter Handler ---------
+
+@bot.message_handler(func=lambda message: message.text == 'جست‌وجوی مبارز')
 @login_required
-def back_to_main_menu(message):
-    send_welcome(message)
+def search_fighter_menu(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً نام مبارز را برای جست‌وجو وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_fighter_search)
+
+def process_fighter_search(message):
+    chat_id = message.chat.id
+    search_term = message.text.strip()
+    
+    if search_term == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT f.fighter_id, f.name, f.nickname, f.weight_class, f.age, 
+                   f.nationality, f.status, g.name as gym_name
+            FROM fighter f
+            LEFT JOIN gym g ON f.gym_id = g.gym_id
+            WHERE f.name ILIKE %s OR f.nickname ILIKE %s
+            ORDER BY f.name
+        """, (f'%{search_term}%', f'%{search_term}%'))
+        
+        fighters = cur.fetchall()
+        
+        if not fighters:
+            bot.send_message(chat_id, f"هیچ مبارزی با نام یا نام مستعار '{search_term}' یافت نشد.", reply_markup=main_menu())
+            return
+        
+        response = f"نتایج جست‌وجو برای '{search_term}':\n\n"
+        for fighter in fighters:
+            response += f"**{fighter[1]}**\n"
+            response += f"شناسه مبارز: {fighter[0]}\n"
+            response += f"نام مستعار: {fighter[2] or 'ثبت نشده'}\n"
+            response += f"رده وزنی: {fighter[3]}\n"
+            response += f"سن: {fighter[4]}\n"
+            response += f"ملیت: {fighter[5]}\n"
+            response += f"وضعیت: {fighter[6]}\n"
+            response += f"باشگاه: {fighter[7] or 'ثبت نشده'}\n"
+            response += "-" * 40 + "\n"
+        
+        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در جست‌وجو: {e}", reply_markup=main_menu())
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
+
+# region ------------ Search Gym Handler -----------
+
+@bot.message_handler(func=lambda message: message.text == 'جست‌وجوی باشگاه')
+@login_required
+def search_gym_menu(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً نام باشگاه یا مکان باشگاه یا نام مالک را برای جست‌وجو وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_gym_search)
+
+def process_gym_search(message):
+    chat_id = message.chat.id
+    search_term = message.text.strip()
+    
+    if search_term == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT gym_id, name, location, owner, reputation_score
+            FROM gym
+            WHERE name ILIKE %s OR location ILIKE %s OR owner ILIKE %s
+            ORDER BY name
+        """, (f'%{search_term}%', f'%{search_term}%', f'%{search_term}%'))
+        
+        gyms = cur.fetchall()
+        
+        if not gyms:
+            bot.send_message(chat_id, f"هیچ باشگاهی با این نام یا این مکان یا این مالک '{search_term}' یافت نشد.", reply_markup=main_menu())
+            return
+        
+        response = f"نتایج جست‌وجو برای '{search_term}':\n\n"
+        for gym in gyms:
+            response += f"**{gym[1]}**\n"
+            response += f"شناسه باشگاه: {gym[0]}\n"
+            response += f"مکان: {gym[2]}\n"
+            response += f"مالک: {gym[3]}\n"
+            response += f"امتیاز شهرت: {gym[4]}\n"
+            
+            cur.execute("""
+                SELECT COUNT(*) FROM fighter WHERE gym_id = %s
+            """, (gym[0],))
+            fighter_count = cur.fetchone()[0] # type: ignore
+            
+            cur.execute("""
+                SELECT COUNT(*) FROM trainer WHERE gym_id = %s
+            """, (gym[0],))
+            trainer_count = cur.fetchone()[0] # type: ignore
+            
+            response += f"تعداد مبارزین: {fighter_count}\n"
+            response += f"تعداد مربیان: {trainer_count}\n"
+            response += "-" * 40 + "\n"
+        
+        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در جست‌وجو: {e}", reply_markup=main_menu())
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
+
+# region ---------- Search Trainer Handler ---------
+
+@bot.message_handler(func=lambda message: message.text == 'جست‌وجوی مربی')
+@login_required
+def search_trainer_menu(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً نام مربی یا نام تخصص را برای جست‌وجو وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_trainer_search)
+
+def process_trainer_search(message):
+    chat_id = message.chat.id
+    search_term = message.text.strip()
+    
+    if search_term == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.trainer_id, t.name, t.specialty, g.name as gym_name
+            FROM trainer t
+            LEFT JOIN gym g ON t.gym_id = g.gym_id
+            WHERE t.name ILIKE %s OR t.specialty ILIKE %s
+            ORDER BY t.name
+        """, (f'%{search_term}%', f'%{search_term}%'))
+        
+        trainers = cur.fetchall()
+        
+        if not trainers:
+            bot.send_message(chat_id, f"هیچ مربی‌ای با این نام یا این تخصص '{search_term}' یافت نشد.", reply_markup=main_menu())
+            return
+        
+        response = f"نتایج جست‌وجو برای '{search_term}':\n\n"
+        for trainer in trainers:
+            response += f"**{trainer[1]}**\n"
+            response += f"شناسه مربی: {trainer[0]}\n"
+            response += f"تخصص: {trainer[2]}\n"
+            response += f"باشگاه: {trainer[3] or 'ثبت نشده'}\n"
+            
+            cur.execute("""
+                SELECT COUNT(*) FROM fighter_trainer WHERE trainer_id = %s
+            """, (trainer[0],))
+            fighter_count = cur.fetchone()[0] # type: ignore
+            
+            response += f"تعداد شاگردان: {fighter_count}\n"
+            response += "-" * 40 + "\n"
+        
+        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در جست‌وجو: {e}", reply_markup=main_menu())
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
+
+# endregion
 
 if __name__ == '__main__':
     create_tables()
