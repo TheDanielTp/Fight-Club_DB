@@ -378,6 +378,8 @@ def show_fighters(message):
         if not fighters:
             bot.send_message(message.chat.id, "هیچ مبارزی در باشگاه ثبت نشده است.")
             return
+        
+        status_dict = {'active': 'فعال', 'retired': 'بازنشسته', 'suspended': 'تعلیق شده'}
 
         response = "لیست مبارزین:\n\n"
         for fighter in fighters:
@@ -387,7 +389,8 @@ def show_fighters(message):
             response += f"رده وزنی: {fighter[3]}\n"
             response += f"سن: {fighter[4]}\n"
             response += f"ملیت: {fighter[5]}\n"
-            response += f"وضعیت: {fighter[6]}\n"
+            response += f"وضعیت: {status_dict.get(fighter[6], 'نامشخص')}\n"
+            response += f"باشگاه: {get_gym_by_id(fighter[7])['name'] or 'ثبت نشده'}\n" # type: ignore
             response += "-" * 40 + "\n"
 
         bot.send_message(message.chat.id, response, parse_mode='Markdown')
@@ -1061,6 +1064,8 @@ def process_fighter_search(message):
             bot.send_message(chat_id, f"هیچ مبارزی با نام یا نام مستعار '{search_term}' یافت نشد.", reply_markup=main_menu())
             return
         
+        status_dict = {'active': 'فعال', 'retired': 'بازنشسته', 'suspended': 'تعلیق شده'}
+        
         response = f"نتایج جست‌وجو برای '{search_term}':\n\n"
         for fighter in fighters:
             response += f"**{fighter[1]}**\n"
@@ -1069,8 +1074,8 @@ def process_fighter_search(message):
             response += f"رده وزنی: {fighter[3]}\n"
             response += f"سن: {fighter[4]}\n"
             response += f"ملیت: {fighter[5]}\n"
-            response += f"وضعیت: {fighter[6]}\n"
-            response += f"باشگاه: {fighter[7] or 'ثبت نشده'}\n"
+            response += f"وضعیت: {status_dict.get(fighter[6], 'نامشخص')}\n"
+            response += f"باشگاه: {get_gym_by_id(fighter[7])['name'] or 'ثبت نشده'}\n" # type: ignore
             response += "-" * 40 + "\n"
         
         bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
