@@ -6,14 +6,20 @@ from datetime import datetime, timedelta
 import os
 from functools import wraps
 
+# region ----- Environment Variables -----
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DB_URI = os.environ.get("DB_URI")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")  
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")  
 
+# endregion
+
 bot = telebot.TeleBot(BOT_TOKEN) # type: ignore
 
 user_sessions = {}
+
+# region ----- Starting Methods -----
 
 def check_login(chat_id):
     return user_sessions.get(chat_id, False)
@@ -131,16 +137,21 @@ def main_menu():
     button1 = types.KeyboardButton('نمایش مبارزین')
     button2 = types.KeyboardButton('نمایش باشگاه‌ها')
     button3 = types.KeyboardButton('نمایش مربی‌ها')
-    button4 = types.KeyboardButton('اضافه کردن مبارز')
-    button5 = types.KeyboardButton('اضافه کردن باشگاه')
-    button6 = types.KeyboardButton('اضافه کردن مربی')
-    button7 = types.KeyboardButton('جست‌وجوی مبارز')
-    button8 = types.KeyboardButton('جست‌وجوی باشگاه')
-    button9 = types.KeyboardButton('جست‌وجوی مربی')
-    button10 = types.KeyboardButton('اضافه کردن رویداد')
-    button11 = types.KeyboardButton('خروج از سیستم')
+    button4 = types.KeyboardButton('نمایش رویدادها')
+    button5 = types.KeyboardButton('اضافه کردن مبارز')
+    button6 = types.KeyboardButton('اضافه کردن باشگاه')
+    button7 = types.KeyboardButton('اضافه کردن مربی')
+    button8 = types.KeyboardButton('جست‌وجوی مبارز')
+    button9 = types.KeyboardButton('جست‌وجوی باشگاه')
+    button10 = types.KeyboardButton('جست‌وجوی مربی')
+    button11 = types.KeyboardButton('اضافه کردن رویداد')
+    button12 = types.KeyboardButton('ویرایش مبارز')
+    button13 = types.KeyboardButton('ویرایش باشگاه')
+    button14 = types.KeyboardButton('ویرایش مربی')
+    button15 = types.KeyboardButton('ویرایش رویداد')
+    button16 = types.KeyboardButton('خروج از سیستم')
 
-    markup.add(button1, button2, button3, button4, button5, button6, button7, button8, button9, button10, button11)
+    markup.add(button1, button2, button3, button4, button5, button6, button7, button8, button9, button10, button11, button12, button13, button14, button15, button16)
     return markup
 
 def search_menu():
@@ -215,6 +226,8 @@ def send_welcome(message):
 """
     bot.send_message(chat_id, welcome_text, reply_markup=main_menu())
 
+# region ----- View Handlers -----
+
 @bot.message_handler(func=lambda message: message.text == 'نمایش مبارزین')
 @login_required
 def show_fighters(message):
@@ -229,6 +242,7 @@ def show_fighters(message):
             SELECT fighter_id, name, nickname, weight_class, age, nationality, status
             FROM fighter
             ORDER BY name
+            LIMIT 50
         """)
         fighters = cur.fetchall()
         
@@ -269,6 +283,7 @@ def show_gyms(message):
             SELECT gym_id, name, location, owner, reputation_score
             FROM gym
             ORDER BY name
+            LIMIT 50
         """)
         gyms = cur.fetchall()
         
@@ -308,6 +323,7 @@ def show_trainers(message):
             FROM trainer t
             LEFT JOIN gym g ON t.gym_id = g.gym_id
             ORDER BY t.name
+            LIMIT 50
         """)
         trainers = cur.fetchall()
         
@@ -330,6 +346,50 @@ def show_trainers(message):
     finally:
         if conn:
             conn.close()
+
+@bot.message_handler(func=lambda message: message.text == 'نمایش رویدادها')
+@login_required
+def show_events(message):
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(message.chat.id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT me.match_id, me.start_date, me.location, 
+                   STRING_AGG(CONCAT(f.name, ' (', p.result, ')'), ' vs ') as participants
+            FROM match_event me
+            LEFT JOIN participants p ON me.match_id = p.match_id
+            LEFT JOIN fighter f ON p.fighter_id = f.fighter_id
+            GROUP BY me.match_id, me.start_date, me.location
+            ORDER BY me.start_date DESC
+            LIMIT 50
+        """)
+        events = cur.fetchall()
+        
+        if not events:
+            bot.send_message(message.chat.id, "هیچ رویدادی ثبت نشده است.")
+            return
+
+        response = "آخرین رویدادها:\n\n"
+        for event in events:
+            response += f"🔹 **رویداد #{event[0]}**\n"
+            response += f"📅 تاریخ: {event[1].strftime('%Y-%m-%d %H:%M')}\n"
+            response += f"📍 مکان: {event[2]}\n"
+            response += f"🥊 مبارزین: {event[3]}\n"
+            response += "-" * 30 + "\n"
+        
+        bot.send_message(message.chat.id, response, parse_mode='Markdown')
+        cur.close()
+    except Error as e:
+        bot.send_message(message.chat.id, f"خطا در دریافت اطلاعات: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
 
 def get_gym_id_by_name(gym_name):
     connection = get_db_connection()
@@ -818,6 +878,240 @@ def process_trainer_search(message):
         cur.close()
     except Error as e:
         bot.send_message(chat_id, f"خطا در جست‌وجو: {e}", reply_markup=main_menu())
+    finally:
+        if conn:
+            conn.close()
+
+def get_fighter_id_by_name(fighter_name):
+    connection = get_db_connection()
+    if not connection:
+        return None
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT fighter_id FROM fighter WHERE name = %s;",
+            (fighter_name,)
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except Error as e:
+        print(f"DB error: {e}")
+        return None
+    finally:
+        cursor.close() # type: ignore
+        connection.close()
+
+@bot.message_handler(func=lambda message: message.text == 'اضافه کردن رویداد')
+@login_required
+def add_event_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً تاریخ و زمان شروع رویداد را وارد کنید (فرمت: YYYY-MM-DD HH:MM):", reply_markup=cancel_keyboard())
+    bot.register_next_step_handler(msg, process_event_start_date)
+
+def process_event_start_date(message):
+    chat_id = message.chat.id
+    start_date_str = message.text.strip()
+    
+    if start_date_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    try:
+        # Parse the date
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d %H:%M")
+        
+        # Store in session
+        if chat_id not in user_sessions:
+            user_sessions[chat_id] = {}
+        user_sessions[chat_id]['event_data'] = {'start_date': start_date}
+        
+        msg = bot.send_message(chat_id, "لطفاً مکان رویداد را وارد کنید:")
+        bot.register_next_step_handler(msg, process_event_location)
+    except ValueError:
+        msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
+        bot.register_next_step_handler(msg, process_event_start_date)
+
+def process_event_location(message):
+    chat_id = message.chat.id
+    location = message.text.strip()
+    
+    if location == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not location:
+        msg = bot.send_message(chat_id, "مکان وارد شده معتبر نیست. لطفاً مجدداً وارد کنید:")
+        bot.register_next_step_handler(msg, process_event_location)
+        return
+    
+    # Store location
+    user_sessions[chat_id]['event_data']['location'] = location
+    
+    # Ask for first fighter
+    msg = bot.send_message(chat_id, "لطفاً نام مبارز اول را وارد کنید:")
+    bot.register_next_step_handler(msg, process_event_fighter1)
+
+def process_event_fighter1(message):
+    chat_id = message.chat.id
+    fighter1_name = message.text.strip()
+    
+    if fighter1_name == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    fighter1_id = get_fighter_id_by_name(fighter1_name)
+    
+    if fighter1_id is None:
+        msg = bot.send_message(chat_id, "مبارز یافت نشد. لطفاً نام را مجدداً وارد کنید:")
+        bot.register_next_step_handler(msg, process_event_fighter1)
+        return
+    
+    # Store fighter1
+    user_sessions[chat_id]['event_data']['fighter1_id'] = fighter1_id
+    user_sessions[chat_id]['event_data']['fighter1_name'] = fighter1_name
+    
+    msg = bot.send_message(chat_id, "لطفاً نام مبارز دوم را وارد کنید:")
+    bot.register_next_step_handler(msg, process_event_fighter2)
+
+def process_event_fighter2(message):
+    chat_id = message.chat.id
+    fighter2_name = message.text.strip()
+    
+    if fighter2_name == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    fighter2_id = get_fighter_id_by_name(fighter2_name)
+    
+    if fighter2_id is None:
+        msg = bot.send_message(chat_id, "مبارز یافت نشد. لطفاً نام را مجدداً وارد کنید:")
+        bot.register_next_step_handler(msg, process_event_fighter2)
+        return
+    
+    # Check if same fighter
+    if fighter2_id == user_sessions[chat_id]['event_data']['fighter1_id']:
+        msg = bot.send_message(chat_id, "یک مبارز نمی‌تواند با خودش مبارزه کند! لطفاً مبارز دیگری را وارد کنید:")
+        bot.register_next_step_handler(msg, process_event_fighter2)
+        return
+    
+    # Store fighter2
+    user_sessions[chat_id]['event_data']['fighter2_id'] = fighter2_id
+    user_sessions[chat_id]['event_data']['fighter2_name'] = fighter2_name
+    
+    # Ask for result
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("برد مبارز اول"), 
+               types.KeyboardButton("برد مبارز دوم"),
+               types.KeyboardButton("مساوی"),
+               types.KeyboardButton("لغو شده"),
+               types.KeyboardButton("نامعلوم"),
+               types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, "نتیجه مبارزه را انتخاب کنید:", reply_markup=markup)
+    bot.register_next_step_handler(msg, process_event_result)
+
+def process_event_result(message):
+    chat_id = message.chat.id
+    result_text = message.text.strip()
+    
+    if result_text == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    result_map = {
+        "برد مبارز اول": "win",
+        "برد مبارز دوم": "win",
+        "مساوی": "draw",
+        "لغو شده": "no contest",
+        "نامعلوم": None
+    }
+    
+    if result_text not in result_map:
+        msg = bot.send_message(chat_id, "نتیجه نامعتبر است. لطفاً از گزینه‌ها انتخاب کنید:")
+        bot.register_next_step_handler(msg, process_event_result)
+        return
+    
+    result = result_map[result_text]
+    
+    event_data = user_sessions[chat_id]['event_data']
+    
+    if result_text == "برد مبارز اول":
+        fighter1_result = "win"
+        fighter2_result = "loss"
+    elif result_text == "برد مبارز دوم":
+        fighter1_result = "loss"
+        fighter2_result = "win"
+    elif result_text == "مساوی" or result_text == "لغو شده" or result_text == "نامعلوم":
+        fighter1_result = result
+        fighter2_result = result
+    else:
+        fighter1_result = None
+        fighter2_result = None
+    
+    event_data['fighter1_result'] = fighter1_result
+    event_data['fighter2_result'] = fighter2_result
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=main_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        
+        cur.execute("""
+            INSERT INTO match_event (start_date, location)
+            VALUES (%s, %s)
+            RETURNING match_id
+        """, (event_data['start_date'], event_data['location']))
+        
+        match_id = cur.fetchone()[0] # type: ignore
+        
+        cur.execute("""
+            INSERT INTO participants (match_id, fighter_id, result)
+            VALUES (%s, %s, %s)
+        """, (match_id, event_data['fighter1_id'], event_data['fighter1_result']))
+        
+        cur.execute("""
+            INSERT INTO participants (match_id, fighter_id, result)
+            VALUES (%s, %s, %s)
+        """, (match_id, event_data['fighter2_id'], event_data['fighter2_result']))
+        
+        conn.commit()
+        
+        result_display = ""
+        if result_text == "برد مبارز اول":
+            result_display = f"{event_data['fighter1_name']} برنده شد"
+        elif result_text == "برد مبارز دوم":
+            result_display = f"{event_data['fighter2_name']} برنده شد"
+        else:
+            result_display = result_text
+        
+        response = f"""
+رویداد جدید با موفقیت ثبت شد!
+
+**جزئیات رویداد:**
+شناسه رویداد: {match_id}
+تاریخ: {event_data['start_date'].strftime('%Y-%m-%d %H:%M')}
+مکان: {event_data['location']}
+
+**مبارزین:**
+1. {event_data['fighter1_name']}
+2. {event_data['fighter2_name']}
+
+**نتیجه:** {result_display}
+"""
+
+        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
+        cur.close()
+        
+        # Clean up session
+        if chat_id in user_sessions and 'event_data' in user_sessions[chat_id]:
+            del user_sessions[chat_id]['event_data']
+            
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در ثبت رویداد:\n{e}", reply_markup=main_menu())
     finally:
         if conn:
             conn.close()
