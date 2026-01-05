@@ -126,9 +126,6 @@ def create_tables():
 
 # region ----------------------- Helper Functions -----------------------
 
-def translate_to_english(text):
-    return unidecode(text)
-
 def get_gym_id_by_name(gym_name):
     connection = get_db_connection()
     if not connection:
@@ -239,6 +236,75 @@ def get_gym_by_id(gym_id):
                 'location': row[2],
                 'owner': row[3],
                 'reputation_score': row[4]
+            }
+        return None
+    except Error as e:
+        print(f"DB error: {e}")
+        return None
+    finally:
+        cursor.close() # type: ignore
+        connection.close()
+
+def get_trainer_by_id(trainer_id):
+    connection = get_db_connection()
+    if not connection:
+        return None
+    
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT t.*, g.name as gym_name 
+            FROM trainer t 
+            LEFT JOIN gym g ON t.gym_id = g.gym_id 
+            WHERE t.trainer_id = %s
+        """, (trainer_id,))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'trainer_id': row[0],
+                'name': row[1],
+                'specialty': row[2],
+                'gym_id': row[3],
+                'gym_name': row[4]
+            }
+        return None
+    except Error as e:
+        print(f"DB error: {e}")
+        return None
+    finally:
+        cursor.close() # type: ignore
+        connection.close()
+
+def get_event_by_id(event_id):
+    connection = get_db_connection()
+    if not connection:
+        return None
+    
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT me.*, 
+                   f1.name as fighter1_name, f2.name as fighter2_name,
+                   p1.result as fighter1_result, p2.result as fighter2_result
+            FROM match_event me
+            JOIN participants p1 ON me.match_id = p1.match_id
+            JOIN participants p2 ON me.match_id = p2.match_id
+            JOIN fighter f1 ON p1.fighter_id = f1.fighter_id
+            JOIN fighter f2 ON p2.fighter_id = f2.fighter_id
+            WHERE me.match_id = %s AND p1.fighter_id != p2.fighter_id
+            LIMIT 1
+        """, (event_id,))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'match_id': row[0],
+                'start_date': row[1],
+                'end_date': row[2],
+                'location': row[3],
+                'fighter1_name': row[4],
+                'fighter2_name': row[5],
+                'fighter1_result': row[6],
+                'fighter2_result': row[7]
             }
         return None
     except Error as e:
@@ -624,16 +690,21 @@ def process_fighter_weight_class(message, full_name, nickname):
 
 def process_fighter_age(message, full_name, nickname, weight_class):
     chat_id = message.chat.id
-    age = message.text.strip()
-    age = translate_to_english(age)
+    age_str = message.text.strip()
+    age = int(age_str)
 
     if age == "لغو عملیات":
         cancel_process(message)
         return
 
-    if not age.isdigit() or int(age) <= 0 or not age:
+    if not age_str.isdigit() or age <= 0 or not age:
         msg = bot.send_message(chat_id, "سن وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید.")
         bot.register_next_step_handler(msg, process_gym_owner, full_name, nickname, weight_class)
+        return
+    
+    if age < 18:
+        msg = bot.send_message(chat_id, "سن مبارز باید حداقل 18 سال باشد.")
+        bot.register_next_step_handler(msg, process_fighter_age, full_name, nickname, weight_class)
         return
 
     msg = bot.send_message(chat_id, "لطفاً ملیت مبارز را وارد کنید:")
@@ -875,13 +946,41 @@ def process_event_start_date(message):
     try:
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d %H:%M")
         
-        msg = bot.send_message(chat_id, "لطفاً مکان رویداد را وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_location, start_date)
+        msg = bot.send_message(chat_id, "لطفاً تاریخ و زمان پایان رویداد را وارد کنید (فرمت: YYYY-MM-DD HH:MM):", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_event_end_date, start_date)
     except ValueError:
         msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
         bot.register_next_step_handler(msg, process_event_start_date)
+    
+def process_event_end_date(message, start_date):
+    chat_id = message.chat.id
+    end_date_str = message.text.strip()
+    
+    if end_date_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if end_date_str in ["نامعلوم", "نامشخص", "ندارد", "خالی"]:
+        end_date = None
+        msg = bot.send_message(chat_id, "لطفاً مکان رویداد را وارد کنید:")
+        bot.register_next_step_handler(msg, process_event_location, start_date, end_date)
+        return
+    
+    try:
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M")
+        
+        if end_date <= start_date:
+            msg = bot.send_message(chat_id, "تاریخ پایان باید بعد از تاریخ شروع باشد. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
+            bot.register_next_step_handler(msg, process_event_end_date, start_date)
+            return
+        
+        msg = bot.send_message(chat_id, "لطفاً مکان رویداد را وارد کنید:")
+        bot.register_next_step_handler(msg, process_event_location, start_date, end_date)
+    except ValueError:
+        msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
+        bot.register_next_step_handler(msg, process_event_end_date, start_date)
 
-def process_event_location(message, start_date):
+def process_event_location(message, start_date, end_date):
     chat_id = message.chat.id
     location = message.text.strip()
     
@@ -895,9 +994,9 @@ def process_event_location(message, start_date):
         return
     
     msg = bot.send_message(chat_id, "لطفاً نام مبارز اول را وارد کنید:")
-    bot.register_next_step_handler(msg, process_event_fighter1, start_date, location)
+    bot.register_next_step_handler(msg, process_event_fighter1, start_date, end_date, location)
 
-def process_event_fighter1(message, start_date, location):
+def process_event_fighter1(message, start_date, end_date, location):
     chat_id = message.chat.id
     fighter1_name = message.text.strip()
     
@@ -909,13 +1008,13 @@ def process_event_fighter1(message, start_date, location):
     
     if fighter1_id is None:
         msg = bot.send_message(chat_id, "مبارز یافت نشد. لطفاً نام را مجدداً وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_fighter1, start_date, location)
+        bot.register_next_step_handler(msg, process_event_fighter1, start_date, end_date, location)
         return
     
     msg = bot.send_message(chat_id, "لطفاً نام مبارز دوم را وارد کنید:")
-    bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
+    bot.register_next_step_handler(msg, process_event_fighter2, start_date, end_date, location, fighter1_id, fighter1_name)
 
-def process_event_fighter2(message, start_date, location, fighter1_id, fighter1_name):
+def process_event_fighter2(message, start_date, end_date, location, fighter1_id, fighter1_name):
     chat_id = message.chat.id
     fighter2_name = message.text.strip()
     
@@ -927,12 +1026,12 @@ def process_event_fighter2(message, start_date, location, fighter1_id, fighter1_
     
     if fighter2_id is None:
         msg = bot.send_message(chat_id, "مبارز یافت نشد. لطفاً نام را مجدداً وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
+        bot.register_next_step_handler(msg, process_event_fighter2, start_date, end_date, location, fighter1_id, fighter1_name)
         return
     
     if fighter2_id == fighter1_id:
         msg = bot.send_message(chat_id, "یک مبارز نمی‌تواند با خودش مبارزه کند! لطفاً مبارز دیگری را وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
+        bot.register_next_step_handler(msg, process_event_fighter2, start_date, end_date, location, fighter1_id, fighter1_name)
         return
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -944,9 +1043,9 @@ def process_event_fighter2(message, start_date, location, fighter1_id, fighter1_
                types.KeyboardButton("لغو عملیات"))
     
     msg = bot.send_message(chat_id, "نتیجه مبارزه را انتخاب کنید:", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_event_result, start_date, location, fighter1_id, fighter1_name, fighter2_id, fighter2_name)
+    bot.register_next_step_handler(msg, process_event_result, start_date, end_date, location, fighter1_id, fighter1_name, fighter2_id, fighter2_name)
 
-def process_event_result(message, start_date, location, fighter1_id, fighter1_name, fighter2_id, fighter2_name):
+def process_event_result(message, start_date, end_date, location, fighter1_id, fighter1_name, fighter2_id, fighter2_name):
     chat_id = message.chat.id
     result_text = message.text.strip()
     
@@ -991,10 +1090,10 @@ def process_event_result(message, start_date, location, fighter1_id, fighter1_na
         cur = conn.cursor()
         
         cur.execute("""
-            INSERT INTO match_event (start_date, location)
-            VALUES (%s, %s)
+            INSERT INTO match_event (start_date, end_date, location)
+            VALUES (%s, %s, %s)
             RETURNING match_id
-        """, (start_date, location))
+        """, (start_date, end_date, location))
         
         match_id = cur.fetchone()[0] # type: ignore
         
@@ -1295,9 +1394,9 @@ def process_edit_fighter_id(message):
                types.KeyboardButton("لغو عملیات"))
     
     msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
-    bot.register_next_step_handler(msg, process_edit_fighter_field, fighter, fighter_id)
+    bot.register_next_step_handler(msg, process_edit_fighter_field, fighter_id)
 
-def process_edit_fighter_field(message, fighter, fighter_id):
+def process_edit_fighter_field(message, fighter_id):
     chat_id = message.chat.id
     field = message.text.strip()
     
@@ -1328,30 +1427,30 @@ def process_edit_fighter_field(message, fighter, fighter_id):
                    types.KeyboardButton("suspended"),
                    types.KeyboardButton("لغو عملیات"))
         msg = bot.send_message(chat_id, "لطفاً وضعیت جدید را انتخاب کنید (active, retired, suspended):", reply_markup=markup)
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
     elif field == "باشگاه":
         msg = bot.send_message(chat_id, "لطفاً نام باشگاه جدید را وارد کنید:", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
     elif field == "سن":
         msg = bot.send_message(chat_id, "لطفاً سن جدید را وارد کنید:", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
     elif field == "نام مستعار":
         msg = bot.send_message(chat_id, "لطفاً نام مستعار جدید را وارد کنید (یا 'خالی' برای حذف نام مستعار):", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
     elif field == "ملیت":
         msg = bot.send_message(chat_id, "لطفاً ملیت جدید را وارد کنید (یا 'خالی' برای حذف ملیت):", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
     elif field == "رده وزنی":
         msg = bot.send_message(chat_id, "لطفاً رده وزنی جدید را وارد کنید:", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
     elif field == "نام":
         msg = bot.send_message(chat_id, "لطفاً نام جدید را وارد کنید:", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
     else:
         msg = bot.send_message(chat_id, f"لطفاً مقدار جدید برای فیلد '{field}' را وارد کنید:", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+        bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
 
-def process_edit_fighter_value(message, fighter, fighter_id, field_name):
+def process_edit_fighter_value(message, fighter_id, field_name):
     chat_id = message.chat.id
     new_value = message.text.strip()
     
@@ -1363,7 +1462,7 @@ def process_edit_fighter_value(message, fighter, fighter_id, field_name):
         gym_id = get_gym_id_by_name(new_value)
         if gym_id is None:
             msg = bot.send_message(chat_id, "چنین باشگاهی یافت نشد. لطفاً مجدداً وارد کنید:")
-            bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
+            bot.register_next_step_handler(msg, process_edit_fighter_value, fighter_id, field_name)
             return
         new_value = gym_id
     elif field_name == "nickname" and new_value in ["خالی", "ندارد", "حذف"]:
@@ -1371,9 +1470,9 @@ def process_edit_fighter_value(message, fighter, fighter_id, field_name):
     elif field_name == "nationality" and new_value in ["خالی", "ندارد", "حذف"]:
         new_value = None
 
-    confirm_update_fighter(message, fighter, fighter_id, field_name, new_value)
+    confirm_update_fighter(message, fighter_id, field_name, new_value)
 
-def confirm_update_fighter(message, fighter, fighter_id, field_name, new_value):
+def confirm_update_fighter(message, fighter_id, field_name, new_value):
     chat_id = message.chat.id
     
     response = f"""
@@ -1419,6 +1518,559 @@ def process_fighter_update_confirmation(message, fighter_id, field_name, new_val
         conn.commit()
         
         bot.send_message(chat_id, "اطلاعات مبارز با موفقیت ویرایش شد.", reply_markup=main_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در ویرایش: {e}", reply_markup=main_menu())
+    finally:
+        if conn:
+            conn.close()
+
+@bot.message_handler(func=lambda message: message.text == 'ویرایش باشگاه')
+@login_required
+def edit_gym_menu(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه باشگاه را برای ویرایش وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_edit_gym_id)
+
+def process_edit_gym_id(message):
+    chat_id = message.chat.id
+    gym_id_str = message.text.strip()
+    
+    if gym_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not gym_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_edit_gym_id)
+        return
+    
+    gym_id = int(gym_id_str)
+    gym = get_gym_by_id(gym_id)
+    
+    if not gym:
+        bot.send_message(chat_id, "باشگاهی با این شناسه یافت نشد.", reply_markup=main_menu())
+        return
+    
+    response = f"""
+اطلاعات فعلی باشگاه {gym_id}:
+نام: {gym['name']}
+مکان: {gym['location']}
+مالک: {gym['owner']}
+امتیاز شهرت: {gym['reputation_score']}
+
+لطفاً فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:
+"""
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("نام"),
+               types.KeyboardButton("مکان"),
+               types.KeyboardButton("مالک"),
+               types.KeyboardButton("امتیاز شهرت"),
+               types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
+    bot.register_next_step_handler(msg, process_edit_gym_field, gym_id)
+
+def process_edit_gym_field(message, gym_id):
+    chat_id = message.chat.id
+    field = message.text.strip()
+    
+    if field == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    field_mapping = {
+        "نام": "name",
+        "مکان": "location",
+        "مالک": "owner",
+        "امتیاز شهرت": "reputation_score"
+    }
+    
+    if field not in field_mapping:
+        bot.send_message(chat_id, "فیلد نامعتبر است.", reply_markup=main_menu())
+        return
+    
+    field_name = field_mapping[field]
+    
+    if field_name == 'reputation_score':
+        msg = bot.send_message(chat_id, "لطفاً امتیاز شهرت جدید را وارد کنید (۰ تا ۱۰۰):", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_gym_value, gym_id, field_name)
+    elif field == "نام":
+        msg = bot.send_message(chat_id, "لطفاً نام جدید را وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_gym_value, gym_id, field_name)
+    elif field == "مکان":
+        msg = bot.send_message(chat_id, "لطفاً مکان جدید را وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_gym_value, gym_id, field_name)
+    elif field == "مالک":
+        msg = bot.send_message(chat_id, "لطفاً نام مالک جدید را وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_gym_value, gym_id, field_name)
+    else:
+        msg = bot.send_message(chat_id, f"لطفاً مقدار جدید برای '{field}' وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_gym_value, gym_id, field_name)
+
+def process_edit_gym_value(message, gym_id, field_name):
+    chat_id = message.chat.id
+    new_value = message.text.strip()
+    
+    if new_value == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if field_name == 'reputation_score':
+        if not new_value.isdigit():
+            msg = bot.send_message(chat_id, "امتیاز باید عدد بین ۰ تا ۱۰۰ باشد. لطفاً مجدداً وارد کنید:")
+            bot.register_next_step_handler(msg, process_edit_gym_value, gym_id, field_name)
+            return
+        
+        score = int(new_value)
+        if score < 0 or score > 100:
+            msg = bot.send_message(chat_id, "امتیاز باید بین ۰ تا ۱۰۰ باشد. لطفاً مجدداً وارد کنید:")
+            bot.register_next_step_handler(msg, process_edit_gym_value, gym_id, field_name)
+            return
+    
+    response = f"""
+آیا از اعمال تغییر مطمئن هستید؟
+    """
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("بله، ویرایش کن"),
+               types.KeyboardButton("خیر، لغو کن"))
+    
+    msg = bot.send_message(chat_id, response, reply_markup=markup)
+    bot.register_next_step_handler(msg, process_gym_update_confirmation, gym_id, field_name, new_value)
+
+def process_gym_update_confirmation(message, gym_id, field_name, new_value):
+    chat_id = message.chat.id
+    confirmation = message.text.strip()
+    
+    if confirmation in ["خیر، لغو کن", "لغو عملیات"]:
+        bot.send_message(chat_id, "ویرایش لغو شد.", reply_markup=main_menu())
+        return
+    
+    if confirmation != "بله، ویرایش کن":
+        bot.send_message(chat_id, "دستور نامعتبر.", reply_markup=main_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=main_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        
+        if field_name == 'reputation_score':
+            new_value = int(new_value)
+        
+        cur.execute(f"""
+            UPDATE gym 
+            SET {field_name} = %s 
+            WHERE gym_id = %s
+        """, (new_value, gym_id))
+        
+        conn.commit()
+        
+        bot.send_message(chat_id, "اطلاعات باشگاه با موفقیت ویرایش شد.", reply_markup=main_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در ویرایش: {e}", reply_markup=main_menu())
+    finally:
+        if conn:
+            conn.close()
+        
+        if 'edit_data' in user_sessions[chat_id]:
+            del user_sessions[chat_id]['edit_data']
+
+@bot.message_handler(func=lambda message: message.text == 'ویرایش مربی')
+@login_required
+def edit_trainer_menu(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه مربی را برای ویرایش وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_edit_trainer_id)
+
+def process_edit_trainer_id(message):
+    chat_id = message.chat.id
+    trainer_id_str = message.text.strip()
+    
+    if trainer_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not trainer_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_edit_trainer_id)
+        return
+    
+    trainer_id = int(trainer_id_str)
+    trainer = get_trainer_by_id(trainer_id)
+    
+    if not trainer:
+        bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد.", reply_markup=main_menu())
+        return
+    
+    response = f"""
+اطلاعات فعلی مربی {trainer_id}:
+نام: {trainer['name']}
+تخصص: {trainer['specialty']}
+باشگاه: {trainer['gym_name'] or 'ثبت نشده'}
+
+لطفاً فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:
+    """
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("نام"),
+               types.KeyboardButton("تخصص"),
+               types.KeyboardButton("باشگاه"),
+               types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
+    bot.register_next_step_handler(msg, process_edit_trainer_field, trainer_id)
+
+def process_edit_trainer_field(message, trainer_id):
+    chat_id = message.chat.id
+    field = message.text.strip()
+    
+    if field == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    field_mapping = {
+        "نام": "name",
+        "تخصص": "specialty",
+        "باشگاه": "gym_id"
+    }
+    
+    if field not in field_mapping:
+        bot.send_message(chat_id, "فیلد نامعتبر است. لطفاً از گزینه‌ها انتخاب کنید.", reply_markup=main_menu())
+        return
+    
+    field_name = field_mapping[field]
+    
+    if field == "باشگاه":
+        msg = bot.send_message(chat_id, "لطفاً نام باشگاه جدید را وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_trainer_value, trainer_id, field_name)
+    elif field == "تخصص":
+        msg = bot.send_message(chat_id, "لطفاً تخصص جدید را وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_trainer_value, trainer_id, field_name)
+    elif field == "نام":
+        msg = bot.send_message(chat_id, "لطفاً نام جدید را وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_trainer_value, trainer_id, field_name)
+    else:
+        msg = bot.send_message(chat_id, f"لطفاً مقدار جدید برای '{field}' وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_trainer_value, trainer_id, field_name)
+
+def process_edit_trainer_value(message, trainer_id, field_name):
+    chat_id = message.chat.id
+    new_value = message.text.strip()
+    
+    if new_value == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if field_name == "gym_id":
+        gym_id = get_gym_id_by_name(new_value)
+        if gym_id is None:
+            msg = bot.send_message(chat_id, "چنین باشگاهی یافت نشد. لطفاً مجدداً وارد کنید:")
+            bot.register_next_step_handler(msg, process_edit_trainer_value, trainer_id, field_name)
+            return
+        new_value = gym_id
+    
+    if field_name == "name" and len(new_value) <= 1:
+        msg = bot.send_message(chat_id, "نام وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید.")
+        bot.register_next_step_handler(msg, process_edit_trainer_value, trainer_id, field_name)
+        return
+    
+    confirm_update_trainer(message, trainer_id, field_name, new_value)
+
+def confirm_update_trainer(message, trainer_id, field_name, new_value):
+    chat_id = message.chat.id
+    
+    response = f"""
+آیا از اعمال تغییر مطمئن هستید؟
+"""
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("بله، ویرایش کن"),
+               types.KeyboardButton("خیر، لغو کن"),
+               types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, reply_markup=markup)
+    bot.register_next_step_handler(msg, process_trainer_update_confirmation, trainer_id, field_name, new_value)
+
+def process_trainer_update_confirmation(message, trainer_id, field_name, new_value):
+    chat_id = message.chat.id
+    confirmation = message.text.strip()
+    
+    if confirmation in ["خیر، لغو کن", "لغو عملیات"]:
+        bot.send_message(chat_id, "ویرایش لغو شد.", reply_markup=main_menu())
+        return
+    
+    if confirmation != "بله، ویرایش کن":
+        bot.send_message(chat_id, "دستور نامعتبر.", reply_markup=main_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=main_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        
+        cur.execute(f"""
+            UPDATE trainer 
+            SET {field_name} = %s 
+            WHERE trainer_id = %s
+        """, (new_value, trainer_id))
+        
+        conn.commit()
+        
+        bot.send_message(chat_id, "اطلاعات مربی با موفقیت ویرایش شد.", reply_markup=main_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در ویرایش: {e}", reply_markup=main_menu())
+    finally:
+        if conn:
+            conn.close()
+
+@bot.message_handler(func=lambda message: message.text == 'ویرایش رویداد')
+@login_required
+def edit_event_menu(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه رویداد را برای ویرایش وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_edit_event_id)
+
+def process_edit_event_id(message):
+    chat_id = message.chat.id
+    event_id_str = message.text.strip()
+    
+    if event_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not event_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_edit_event_id)
+        return
+    
+    event_id = int(event_id_str)
+    event = get_event_by_id(event_id)
+    
+    if not event:
+        bot.send_message(chat_id, "رویدادی با این شناسه یافت نشد.", reply_markup=main_menu())
+        return
+    
+    response = f"""
+اطلاعات فعلی رویداد {event_id}:
+تاریخ: {event['start_date'].strftime('%Y-%m-%d %H:%M')}
+مکان: {event['location']}
+مبارزین: {event['fighter1_name']} vs {event['fighter2_name']}
+نتیجه: {event['fighter1_name']} ({event['fighter1_result']}) - {event['fighter2_name']} ({event['fighter2_result']})
+
+لطفاً فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:
+    """
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("تاریخ شروع"),
+               types.KeyboardButton("تاریخ پایان"),
+               types.KeyboardButton("مکان"),
+               types.KeyboardButton("نتیجه"),
+               types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
+    bot.register_next_step_handler(msg, process_edit_event_field, event_id)
+
+def process_edit_event_field(message, event_id):
+    chat_id = message.chat.id
+    field = message.text.strip()
+    
+    if field == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if field == "تاریخ شروع":
+        msg = bot.send_message(chat_id, "لطفاً تاریخ و زمان جدید را وارد کنید (فرمت: YYYY-MM-DD HH:MM):", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_event_start_date, event_id, field)
+    elif field == "تاریخ پایان":
+        msg = bot.send_message(chat_id, "لطفاً تاریخ و زمان جدید را وارد کنید (فرمت: YYYY-MM-DD HH:MM):", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_event_end_date, event_id, field)
+    elif field == "مکان":
+        msg = bot.send_message(chat_id, "لطفاً مکان جدید را وارد کنید:", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_edit_event_location, event_id, field)
+    elif field == "نتیجه":
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add(types.KeyboardButton("برد مبارز اول"),
+                   types.KeyboardButton("برد مبارز دوم"),
+                   types.KeyboardButton("مساوی"),
+                   types.KeyboardButton("لغو شده"),
+                   types.KeyboardButton("لغو عملیات"))
+        
+        msg = bot.send_message(chat_id, "نتیجه جدید را انتخاب کنید:", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_edit_event_result, event_id, field)
+    else:
+        bot.send_message(chat_id, "فیلد نامعتبر است.", reply_markup=main_menu())
+
+def process_edit_event_start_date(message, event_id, field):
+    chat_id = message.chat.id
+    new_date_str = message.text.strip()
+    
+    if new_date_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    try:
+        new_date = datetime.strptime(new_date_str, "%Y-%m-%d %H:%M")
+        confirm_update_event(message, event_id, field, new_date)
+    except ValueError:
+        msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
+        bot.register_next_step_handler(msg, process_edit_event_start_date, event_id, field)
+
+def process_edit_event_end_date(message, event_id, field):
+    chat_id = message.chat.id
+    new_date_str = message.text.strip()
+    
+    if new_date_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    try:
+        new_date = datetime.strptime(new_date_str, "%Y-%m-%d %H:%M")
+        
+        # Store in session
+        user_sessions[chat_id]['edit_data']['field_name'] = 'end_date'
+        user_sessions[chat_id]['edit_data']['new_value'] = new_date
+        
+        confirm_update_event(message, event_id, field, new_date)
+    except ValueError:
+        msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
+        bot.register_next_step_handler(msg, process_edit_event_end_date)
+
+def process_edit_event_location(message, event_id, field_name):
+    chat_id = message.chat.id
+    new_location = message.text.strip()
+    
+    if new_location == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not new_location:
+        msg = bot.send_message(chat_id, "مکان وارد شده معتبر نیست. لطفاً مجدداً وارد کنید:")
+        bot.register_next_step_handler(msg, process_edit_event_location)
+        return
+    
+    # Store in session
+    user_sessions[chat_id]['edit_data']['field_name'] = 'location'
+    user_sessions[chat_id]['edit_data']['new_value'] = new_location
+    
+    confirm_update_event(message, event_id, field_name, new_location)
+
+def process_edit_event_result(message, event_id, field_name):
+    chat_id = message.chat.id
+    result_text = message.text.strip()
+    
+    if result_text == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    result_map = {
+        "برد مبارز اول": "win",
+        "برد مبارز دوم": "win",
+        "مساوی": "draw",
+        "لغو شده": "no contest"
+    }
+    
+    if result_text not in result_map:
+        msg = bot.send_message(chat_id, "نتیجه نامعتبر است. لطفاً از گزینه‌ها انتخاب کنید:")
+        bot.register_next_step_handler(msg, process_edit_event_result)
+        return
+        
+    confirm_update_event(message, event_id, field_name, result_text)
+
+def confirm_update_event(message, event_id, field_name, new_value):
+    chat_id = message.chat.id
+    
+    response = f"""
+آیا از اعمال تغییر مطمئن هستید؟
+"""
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("بله، ویرایش کن"),
+               types.KeyboardButton("خیر، لغو کن"),
+               types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, reply_markup=markup)
+    bot.register_next_step_handler(msg, process_event_update_confirmation, event_id, field_name, new_value)
+
+def process_event_update_confirmation(message, event_id, field_name, new_value):
+    chat_id = message.chat.id
+    confirmation = message.text.strip()
+    
+    if confirmation in ["خیر، لغو کن", "لغو عملیات"]:
+        bot.send_message(chat_id, "ویرایش لغو شد.", reply_markup=main_menu())
+        return
+    
+    if confirmation != "بله، ویرایش کن":
+        bot.send_message(chat_id, "دستور نامعتبر.", reply_markup=main_menu())
+        return
+    
+    # Update in database
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=main_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        
+        if field_name in ['start_date', 'location']:
+            cur.execute(f"""
+                UPDATE match_event 
+                SET {field_name} = %s 
+                WHERE match_id = %s
+            """, (new_value, event_id))
+            
+        elif field_name == 'result':
+            result_map = {
+                "برد مبارز اول": "win",
+                "برد مبارز دوم": "win",
+                "مساوی": "draw",
+                "لغو شده": "no contest"
+            }
+
+            result = result_map[new_value]
+            result_text = new_value
+            
+            event = get_event_by_id(event_id)
+            
+            if result_text == "برد مبارز اول":
+                fighter1_result = "win"
+                fighter2_result = "loss"
+            elif result_text == "برد مبارز دوم":
+                fighter1_result = "loss"
+                fighter2_result = "win"
+            else:
+                fighter1_result = result
+                fighter2_result = result
+            
+            fighter1_id = get_fighter_id_by_name(event['fighter1_name']) # type: ignore
+            fighter2_id = get_fighter_id_by_name(event['fighter2_name']) # type: ignore
+            
+            cur.execute("""
+                UPDATE participants 
+                SET result = %s 
+                WHERE match_id = %s AND fighter_id = %s
+            """, (fighter1_result, event_id, fighter1_id))
+            
+            cur.execute("""
+                UPDATE participants 
+                SET result = %s 
+                WHERE match_id = %s AND fighter_id = %s
+            """, (fighter2_result, event_id, fighter2_id))
+        
+        conn.commit()
+        
+        bot.send_message(chat_id, "اطلاعات رویداد با موفقیت ویرایش شد.", reply_markup=main_menu())
         cur.close()
     except Error as e:
         bot.send_message(chat_id, f"خطا در ویرایش: {e}", reply_markup=main_menu())
