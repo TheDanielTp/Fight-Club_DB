@@ -7,6 +7,7 @@ from psycopg2 import Error
 from datetime import datetime, timedelta
 import os
 from functools import wraps
+from unidecode import unidecode
 
 # endregion
 
@@ -126,12 +127,7 @@ def create_tables():
 # region ----------------------- Helper Functions -----------------------
 
 def translate_to_english(text):
-    arabic_numbers = '٠١٢٣٤٥٦٧٨٩'
-    persian_numbers = '۰١٢٣٤٥٦٧٨٩'
-    english_numbers = '0123456789'
-    
-    translation_table = str.maketrans(persian_numbers + arabic_numbers, english_numbers * 2)
-    return text.translate(translation_table)
+    return unidecode(text)
 
 def get_gym_id_by_name(gym_name):
     connection = get_db_connection()
@@ -198,6 +194,31 @@ def get_fighter_by_id(fighter_id):
                 'status': row[6],
                 'gym_id': row[7],
                 'gym_name': row[8]
+            }
+        return None
+    except Error as e:
+        print(f"DB error: {e}")
+        return None
+    finally:
+        cursor.close() # type: ignore
+        connection.close()
+
+def get_gym_by_id(gym_id):
+    connection = get_db_connection()
+    if not connection:
+        return None
+    
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT * FROM gym WHERE gym_id = %s", (gym_id,))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'gym_id': row[0],
+                'name': row[1],
+                'location': row[2],
+                'owner': row[3],
+                'reputation_score': row[4]
             }
         return None
     except Error as e:
@@ -1226,7 +1247,7 @@ def process_edit_fighter_id(message):
     response = f"""
 اطلاعات فعلی مبارز {fighter_id}:
 نام: {fighter['name']}
-لقب: {fighter['nickname'] or 'ثبت نشده'}
+نام مستعار: {fighter['nickname'] or 'ثبت نشده'}
 رده وزنی: {fighter['weight_class']}
 سن: {fighter['age']}
 ملیت: {fighter['nationality'] or 'ثبت نشده'}
@@ -1234,11 +1255,11 @@ def process_edit_fighter_id(message):
 باشگاه: {fighter['gym_name'] or 'ثبت نشده'}
 
 لطفاً فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:
-    """
+"""
 
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     markup.add(types.KeyboardButton("نام"),
-               types.KeyboardButton("لقب"),
+               types.KeyboardButton("نام مستعار"),
                types.KeyboardButton("رده وزنی"),
                types.KeyboardButton("سن"),
                types.KeyboardButton("ملیت"),
@@ -1259,7 +1280,7 @@ def process_edit_fighter_field(message, fighter, fighter_id):
     
     field_mapping = {
         "نام": "name",
-        "لقب": "nickname",
+        "نام مستعار": "nickname",
         "رده وزنی": "weight_class",
         "سن": "age",
         "ملیت": "nationality",
@@ -1285,10 +1306,10 @@ def process_edit_fighter_field(message, fighter, fighter_id):
         msg = bot.send_message(chat_id, "لطفاً نام باشگاه جدید را وارد کنید:", reply_markup=cancel_menu())
         bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
     elif field == "سن":
-        msg = bot.send_message(chat_id, "لطفاً سن جدید را وارد کنید (عدد صحیح):", reply_markup=cancel_menu())
+        msg = bot.send_message(chat_id, "لطفاً سن جدید را وارد کنید:", reply_markup=cancel_menu())
         bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
     elif field == "نام مستعار":
-        msg = bot.send_message(chat_id, "لطفاً لقب جدید را وارد کنید (یا 'خالی' برای حذف لقب):", reply_markup=cancel_menu())
+        msg = bot.send_message(chat_id, "لطفاً نام مستعار جدید را وارد کنید (یا 'خالی' برای حذف نام مستعار):", reply_markup=cancel_menu())
         bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
     elif field == "ملیت":
         msg = bot.send_message(chat_id, "لطفاً ملیت جدید را وارد کنید (یا 'خالی' برای حذف ملیت):", reply_markup=cancel_menu())
@@ -1300,7 +1321,7 @@ def process_edit_fighter_field(message, fighter, fighter_id):
         msg = bot.send_message(chat_id, "لطفاً نام جدید را وارد کنید:", reply_markup=cancel_menu())
         bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
     else:
-        msg = bot.send_message(chat_id, f"لطفاً مقدار جدید برای '{field}' وارد کنید:", reply_markup=cancel_menu())
+        msg = bot.send_message(chat_id, f"لطفاً مقدار جدید برای فیلد '{field}' را وارد کنید:", reply_markup=cancel_menu())
         bot.register_next_step_handler(msg, process_edit_fighter_value, fighter, fighter_id, field_name)
 
 def process_edit_fighter_value(message, fighter, fighter_id, field_name):
@@ -1330,11 +1351,6 @@ def confirm_update_fighter(message, fighter, fighter_id, field_name, new_value):
     
     response = f"""
 آیا از اعمال تغییر مطمئن هستید؟
-
-مبارز: {fighter['name']}
-شناسه: {fighter['fighter_id']}
-فیلد: {field_name}
-مقدار جدید: {new_value}
     """
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
