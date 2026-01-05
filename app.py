@@ -1972,7 +1972,7 @@ def process_edit_event_end_date(message, event_id, field_name):
         confirm_update_event(message, event_id, field_name, new_date)
     except ValueError:
         msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
-        bot.register_next_step_handler(msg, process_edit_event_end_date)
+        bot.register_next_step_handler(msg, process_edit_event_end_date, event_id, field_name)
 
 def process_edit_event_location(message, event_id, field_name):
     chat_id = message.chat.id
@@ -2046,7 +2046,7 @@ def process_event_update_confirmation(message, event_id, field_name, new_value):
     try:
         cur = conn.cursor()
         
-        if field_name in ['start_date', 'location']:
+        if field_name in ['start_date', "end_date", 'location']:
             cur.execute(f"""
                 UPDATE match_event 
                 SET {field_name} = %s 
