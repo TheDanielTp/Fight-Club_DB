@@ -598,12 +598,13 @@ def show_events(message):
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT me.match_id, me.start_date, me.location, 
-            STRING_AGG(CONCAT(f.name, ' (', p.result, ')'), ' vs ') as participants
+            SELECT me.match_id, me.start_date, me.end_date,me.location,f1.name as fighter1_name,f2.name as fighter2_name,p1.result as fighter1_result,p2.result as fighter2_result
             FROM match_event me
-            LEFT JOIN participants p ON me.match_id = p.match_id
-            LEFT JOIN fighter f ON p.fighter_id = f.fighter_id
-            GROUP BY me.match_id, me.start_date, me.location
+            JOIN participants p1 ON me.match_id = p1.match_id
+            JOIN participants p2 ON me.match_id = p2.match_id
+            JOIN fighter f1 ON p1.fighter_id = f1.fighter_id
+            JOIN fighter f2 ON p2.fighter_id = f2.fighter_id
+            WHERE p1.fighter_id < p2.fighter_id
             ORDER BY me.start_date DESC
             LIMIT 50
         """)
@@ -615,10 +616,31 @@ def show_events(message):
 
         response = "آخرین رویدادها:\n\n"
         for event in events:
-            response += f"رویداد {event[0]}\n"
-            response += f"تاریخ: {event[1].strftime('%Y-%m-%d %H:%M')}\n"
-            response += f"مکان: {event[2]}\n"
-            response += f"مبارزین: {event[3]}\n"
+            match_id, start_date, end_date, location, fighter1_name, fighter2_name, fighter1_result, fighter2_result = event
+            
+            if fighter1_result == 'win':
+                result_text = f"پیروزی {fighter1_name}"
+            elif fighter2_result == 'win':
+                result_text = f"پیروزی {fighter2_name}"
+            elif fighter1_result == 'draw':
+                result_text = "تساوی"
+            elif fighter1_result == 'no contest':
+                result_text = "نامعلوم"
+            else:
+                result_text = "ثبت نشده"
+            
+            response += f"رویداد {match_id}\n"
+            response += f"تاریخ: {start_date.strftime('%Y-%m-%d')}\n"
+            response += f"ساعت شروع: {start_date.strftime('%H:%M')}\n"
+            
+            if end_date:
+                response += f"ساعت پایان: {end_date.strftime('%H:%M')}\n"
+            else:
+                response += f"ساعت پایان: ثبت نشده\n"
+            
+            response += f"مکان: {location}\n"
+            response += f"مبارزین: {fighter1_name} و {fighter2_name}\n"
+            response += f"نتیجه: {result_text}\n"
             response += "-" * 40 + "\n"
         
         bot.send_message(message.chat.id, response, parse_mode='Markdown')
@@ -1998,8 +2020,7 @@ def confirm_update_event(message, event_id, field_name, new_value):
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(types.KeyboardButton("بله، ویرایش کن"),
-               types.KeyboardButton("خیر، لغو کن"),
-               types.KeyboardButton("لغو عملیات"))
+               types.KeyboardButton("خیر، لغو کن"))
     
     msg = bot.send_message(chat_id, response, reply_markup=markup)
     bot.register_next_step_handler(msg, process_event_update_confirmation, event_id, field_name, new_value)
