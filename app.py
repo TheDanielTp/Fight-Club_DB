@@ -921,18 +921,13 @@ def process_event_start_date(message):
         # Parse the date
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d %H:%M")
         
-        # Store in session
-        if chat_id not in user_sessions:
-            user_sessions[chat_id] = {}
-        user_sessions[chat_id]['event_data'] = {'start_date': start_date}
-        
         msg = bot.send_message(chat_id, "لطفاً مکان رویداد را وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_location)
+        bot.register_next_step_handler(msg, process_event_location, start_date)
     except ValueError:
         msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD HH:MM):")
         bot.register_next_step_handler(msg, process_event_start_date)
 
-def process_event_location(message):
+def process_event_location(message, start_date):
     chat_id = message.chat.id
     location = message.text.strip()
     
@@ -945,14 +940,10 @@ def process_event_location(message):
         bot.register_next_step_handler(msg, process_event_location)
         return
     
-    # Store location
-    user_sessions[chat_id]['event_data']['location'] = location
-    
-    # Ask for first fighter
     msg = bot.send_message(chat_id, "لطفاً نام مبارز اول را وارد کنید:")
-    bot.register_next_step_handler(msg, process_event_fighter1)
+    bot.register_next_step_handler(msg, process_event_fighter1, start_date, location)
 
-def process_event_fighter1(message):
+def process_event_fighter1(message, start_date, location):
     chat_id = message.chat.id
     fighter1_name = message.text.strip()
     
@@ -964,17 +955,13 @@ def process_event_fighter1(message):
     
     if fighter1_id is None:
         msg = bot.send_message(chat_id, "مبارز یافت نشد. لطفاً نام را مجدداً وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_fighter1)
+        bot.register_next_step_handler(msg, process_event_fighter1, start_date, location)
         return
     
-    # Store fighter1
-    user_sessions[chat_id]['event_data']['fighter1_id'] = fighter1_id
-    user_sessions[chat_id]['event_data']['fighter1_name'] = fighter1_name
-    
     msg = bot.send_message(chat_id, "لطفاً نام مبارز دوم را وارد کنید:")
-    bot.register_next_step_handler(msg, process_event_fighter2)
+    bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
 
-def process_event_fighter2(message):
+def process_event_fighter2(message, start_date, location, fighter1_id, fighter1_name):
     chat_id = message.chat.id
     fighter2_name = message.text.strip()
     
@@ -986,20 +973,15 @@ def process_event_fighter2(message):
     
     if fighter2_id is None:
         msg = bot.send_message(chat_id, "مبارز یافت نشد. لطفاً نام را مجدداً وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_fighter2)
+        bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
         return
     
     # Check if same fighter
-    if fighter2_id == user_sessions[chat_id]['event_data']['fighter1_id']:
+    if fighter2_id == fighter1_id:
         msg = bot.send_message(chat_id, "یک مبارز نمی‌تواند با خودش مبارزه کند! لطفاً مبارز دیگری را وارد کنید:")
-        bot.register_next_step_handler(msg, process_event_fighter2)
+        bot.register_next_step_handler(msg, process_event_fighter2, start_date, location, fighter1_id, fighter1_name)
         return
     
-    # Store fighter2
-    user_sessions[chat_id]['event_data']['fighter2_id'] = fighter2_id
-    user_sessions[chat_id]['event_data']['fighter2_name'] = fighter2_name
-    
-    # Ask for result
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(types.KeyboardButton("برد مبارز اول"), 
                types.KeyboardButton("برد مبارز دوم"),
@@ -1009,9 +991,9 @@ def process_event_fighter2(message):
                types.KeyboardButton("لغو عملیات"))
     
     msg = bot.send_message(chat_id, "نتیجه مبارزه را انتخاب کنید:", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_event_result)
+    bot.register_next_step_handler(msg, process_event_result, start_date, location, fighter1_id, fighter1_name, fighter2_id, fighter2_name)
 
-def process_event_result(message):
+def process_event_result(message, start_date, location, fighter1_id, fighter1_name, fighter2_id, fighter2_name):
     chat_id = message.chat.id
     result_text = message.text.strip()
     
@@ -1033,9 +1015,7 @@ def process_event_result(message):
         return
     
     result = result_map[result_text]
-    
-    event_data = user_sessions[chat_id]['event_data']
-    
+        
     if result_text == "برد مبارز اول":
         fighter1_result = "win"
         fighter2_result = "loss"
@@ -1049,9 +1029,6 @@ def process_event_result(message):
         fighter1_result = None
         fighter2_result = None
     
-    event_data['fighter1_result'] = fighter1_result
-    event_data['fighter2_result'] = fighter2_result
-    
     conn = get_db_connection()
     if conn is None:
         bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=main_menu())
@@ -1064,27 +1041,27 @@ def process_event_result(message):
             INSERT INTO match_event (start_date, location)
             VALUES (%s, %s)
             RETURNING match_id
-        """, (event_data['start_date'], event_data['location']))
+        """, (start_date, location))
         
         match_id = cur.fetchone()[0] # type: ignore
         
         cur.execute("""
             INSERT INTO participants (match_id, fighter_id, result)
             VALUES (%s, %s, %s)
-        """, (match_id, event_data['fighter1_id'], event_data['fighter1_result']))
+        """, (match_id, fighter1_id, fighter1_result))
         
         cur.execute("""
             INSERT INTO participants (match_id, fighter_id, result)
             VALUES (%s, %s, %s)
-        """, (match_id, event_data['fighter2_id'], event_data['fighter2_result']))
+        """, (match_id, fighter2_id, fighter2_result))
         
         conn.commit()
         
         result_display = ""
         if result_text == "برد مبارز اول":
-            result_display = f"{event_data['fighter1_name']} برنده شد"
+            result_display = f"{fighter1_name} برنده شد"
         elif result_text == "برد مبارز دوم":
-            result_display = f"{event_data['fighter2_name']} برنده شد"
+            result_display = f"{fighter2_name} برنده شد"
         else:
             result_display = result_text
         
@@ -1093,23 +1070,18 @@ def process_event_result(message):
 
 **جزئیات رویداد:**
 شناسه رویداد: {match_id}
-تاریخ: {event_data['start_date'].strftime('%Y-%m-%d %H:%M')}
-مکان: {event_data['location']}
+تاریخ: {start_date.strftime('%Y-%m-%d %H:%M')}
+مکان: {location}
 
 **مبارزین:**
-1. {event_data['fighter1_name']}
-2. {event_data['fighter2_name']}
+1. {fighter1_name}
+2. {fighter2_name}
 
 **نتیجه:** {result_display}
 """
 
         bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
         cur.close()
-        
-        # Clean up session
-        if chat_id in user_sessions and 'event_data' in user_sessions[chat_id]:
-            del user_sessions[chat_id]['event_data']
-            
     except Error as e:
         bot.send_message(chat_id, f"خطا در ثبت رویداد:\n{e}", reply_markup=main_menu())
     finally:
