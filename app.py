@@ -388,9 +388,12 @@ def show_fighters(message):
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT fighter_id, name, nickname, weight_class, age, nationality, status
-            FROM fighter
-            ORDER BY name
+            SELECT f.fighter_id, f.name, f.nickname, f.weight_class, f.age, 
+                   f.nationality, f.status, g.name as gym_name
+            FROM fighter f
+            LEFT JOIN gym g ON f.gym_id = g.gym_id
+            WHERE f.name ILIKE %s OR f.nickname ILIKE %s
+            ORDER BY f.name
             LIMIT 50
         """)
         fighters = cur.fetchall()
@@ -410,7 +413,7 @@ def show_fighters(message):
             response += f"سن: {fighter[4]}\n"
             response += f"ملیت: {fighter[5]}\n"
             response += f"وضعیت: {status_dict.get(fighter[6], 'نامشخص')}\n"
-            response += f"باشگاه: {get_gym_name_by_id(fighter[7]) or 'ثبت نشده'}\n" # type: ignore
+            response += f"باشگاه: {fighter[7] or 'ثبت نشده'}\n"
             response += "-" * 40 + "\n"
 
         bot.send_message(message.chat.id, response, parse_mode='Markdown')
@@ -1095,7 +1098,7 @@ def process_fighter_search(message):
             response += f"سن: {fighter[4]}\n"
             response += f"ملیت: {fighter[5]}\n"
             response += f"وضعیت: {status_dict.get(fighter[6], 'نامشخص')}\n"
-            response += f"باشگاه: {get_gym_name_by_id(fighter[7]) or 'ثبت نشده'}\n" # type: ignore
+            response += f"باشگاه: {fighter[7] or 'ثبت نشده'}\n"
             response += "-" * 40 + "\n"
         
         bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=main_menu())
