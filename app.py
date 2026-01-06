@@ -373,6 +373,8 @@ def trainer_fighter_management_menu():
 
 # region ------------------- Fighter-Trainer Handlers -------------------
 
+# region ------ Add Fighter to Trainer Handler ------
+
 @bot.message_handler(func=lambda message: message.text == 'اضافه کردن مربی به مبارز')
 @login_required
 def assign_trainer_to_fighter_command(message):
@@ -419,14 +421,12 @@ def process_assign_trainer_id(message, fighter_id, fighter_name):
     
     trainer_id = int(trainer_id_str)
     
-    # Check if trainer exists
     trainer = get_trainer_by_id(trainer_id)
     if not trainer:
         msg = bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد. لطفاً مجدداً وارد کنید:")
         bot.register_next_step_handler(msg, process_assign_trainer_id, fighter_id, fighter_name)
         return
     
-    # Check if this trainer is already assigned to this fighter
     conn = get_db_connection()
     if conn is None:
         bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
@@ -445,7 +445,6 @@ def process_assign_trainer_id(message, fighter_id, fighter_name):
         
         cur.close()
         
-        # Ask for start date
         msg = bot.send_message(chat_id, "تاریخ شروع همکاری را وارد کنید (فرمت: YYYY-MM-DD یا 'امروز' برای تاریخ امروز):", reply_markup=cancel_menu())
         bot.register_next_step_handler(msg, process_assign_start_date, fighter_id, fighter_name, trainer_id, trainer['name'])
     except Error as e:
@@ -472,7 +471,6 @@ def process_assign_start_date(message, fighter_id, fighter_name, trainer_id, tra
             bot.register_next_step_handler(msg, process_assign_start_date, fighter_id, fighter_name, trainer_id, trainer_name)
             return
     
-    # Save to database
     conn = get_db_connection()
     if conn is None:
         bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
@@ -488,11 +486,11 @@ def process_assign_start_date(message, fighter_id, fighter_name, trainer_id, tra
         conn.commit()
         
         response = f"""
-✅ مربی با موفقیت به مبارز اختصاص داده شد:
+مربی با موفقیت به مبارز اختصاص داده شد:
 
-👤 مبارز: {fighter_name}
-🏷️ مربی: {trainer_name}
-📅 تاریخ شروع: {start_date}
+مبارز: {fighter_name}
+مربی: {trainer_name}
+تاریخ شروع: {start_date}
         """
         
         bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
@@ -503,7 +501,10 @@ def process_assign_start_date(message, fighter_id, fighter_name, trainer_id, tra
         if conn:
             conn.close()
 
-# Method 2: Remove a trainer from a fighter
+# endregion
+
+# region ---- Remove Fighter from Trainer Handler ---
+
 @bot.message_handler(func=lambda message: message.text == 'حذف مربی از مبارز')
 @login_required
 def remove_trainer_from_fighter_command(message):
@@ -526,7 +527,6 @@ def process_remove_fighter_id(message):
     
     fighter_id = int(fighter_id_str)
     
-    # Get fighter's current trainers
     conn = get_db_connection()
     if conn is None:
         bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
@@ -548,7 +548,6 @@ def process_remove_fighter_id(message):
             bot.send_message(chat_id, "این مبارز در حال حاضر مربی فعال ندارد.", reply_markup=trainer_fighter_management_menu())
             return
         
-        # Store trainers in a dictionary for selection
         trainer_dict = {}
         response = "مربیان فعال این مبارز:\n\n"
         
@@ -559,7 +558,6 @@ def process_remove_fighter_id(message):
         
         response += "\nشماره مربی را برای حذف انتخاب کنید:"
         
-        # Create keyboard with trainer numbers
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
         for i in range(len(trainers)):
             markup.add(types.KeyboardButton(str(i+1)))
@@ -589,7 +587,6 @@ def process_select_trainer_to_remove(message, fighter_id, trainer_dict):
     
     selected_trainer = trainer_dict[choice]
     
-    # Ask for end date
     msg = bot.send_message(chat_id, "تاریخ پایان همکاری را وارد کنید (فرمت: YYYY-MM-DD یا 'امروز' برای تاریخ امروز):", reply_markup=cancel_menu())
     bot.register_next_step_handler(msg, process_remove_end_date, fighter_id, selected_trainer['trainer_id'], selected_trainer['trainer_name'])
 
@@ -611,7 +608,6 @@ def process_remove_end_date(message, fighter_id, trainer_id, trainer_name):
             bot.register_next_step_handler(msg, process_remove_end_date, fighter_id, trainer_id, trainer_name)
             return
     
-    # Update database
     conn = get_db_connection()
     if conn is None:
         bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
@@ -628,11 +624,11 @@ def process_remove_end_date(message, fighter_id, trainer_id, trainer_name):
         conn.commit()
         
         response = f"""
-✅ مربی با موفقیت از مبارز حذف شد:
+مربی با موفقیت از مبارز حذف شد:
 
-👤 مبارز: {fighter_id}
-🏷️ مربی: {trainer_name}
-📅 تاریخ پایان: {end_date}
+مبارز: {fighter_id}
+مربی: {trainer_name}
+تاریخ پایان: {end_date}
         """
         
         bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
@@ -643,7 +639,10 @@ def process_remove_end_date(message, fighter_id, trainer_id, trainer_name):
         if conn:
             conn.close()
 
-# Method 3: See all trainers of a fighter
+# endregion
+
+# region -------- Display Fighter's Trainers --------
+
 @bot.message_handler(func=lambda message: message.text == 'مشاهده مربیان یک مبارز')
 @login_required
 def view_fighter_trainers_command(message):
@@ -666,13 +665,11 @@ def process_view_fighter_trainers(message):
     
     fighter_id = int(fighter_id_str)
     
-    # Get fighter info
     fighter = get_fighter_by_id(fighter_id)
     if not fighter:
         bot.send_message(chat_id, "مبارزی با این شناسه یافت نشد.", reply_markup=trainer_fighter_management_menu())
         return
     
-    # Get trainers
     conn = get_db_connection()
     if conn is None:
         bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
@@ -700,7 +697,7 @@ def process_view_fighter_trainers(message):
 مبارز: {fighter['name']}
 شناسه: {fighter_id}
 
-⚠️ این مبارز در حال حاضر مربی ندارد.
+این مبارز در حال حاضر مربی ندارد.
             """
         else:
             response = f"""
@@ -717,26 +714,26 @@ def process_view_fighter_trainers(message):
             for trainer in trainers:
                 trainer_id, trainer_name, specialty, start_date, end_date, status = trainer
                 
-                response += f"\n🏷️ {trainer_name}"
-                response += f"\n📌 تخصص: {specialty}"
-                response += f"\n📅 شروع: {start_date}"
-                
+                response += f"\n{trainer_name}"
+                response += f"\nتخصص: {specialty}"
+                response += f"\nشروع: {start_date}"
+            
                 if end_date:
-                    response += f"\n📅 پایان: {end_date}"
-                    response += f"\n📊 وضعیت: پایان یافته"
+                    response += f"\nپایان: {end_date}"
+                    response += f"\nوضعیت: پایان یافته"
                     inactive_count += 1
                 else:
-                    response += f"\n📅 پایان: -"
-                    response += f"\n📊 وضعیت: فعال"
+                    response += f"\nپایان: -"
+                    response += f"\nوضعیت: فعال"
                     active_count += 1
                 
-                response += f"\n🔗 شناسه مربی: {trainer_id}"
-                response += f"\n{"-"*20}\n"
+                response += f"\nشناسه مربی: {trainer_id}"
+                response += f"\n{"-"*40}\n"
             
             response += f"""
 آمار:
-✅ مربیان فعال: {active_count}
-❌ مربیان گذشته: {inactive_count}
+مربیان فعال: {active_count}
+مربیان گذشته: {inactive_count}
             """
         
         bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
@@ -747,7 +744,10 @@ def process_view_fighter_trainers(message):
         if conn:
             conn.close()
 
-# Method 4: See all fighters of a trainer
+# endregion
+
+# region -------- Display Trainer's Fighters --------
+
 @bot.message_handler(func=lambda message: message.text == 'مشاهده شاگردان یک مربی')
 @login_required
 def view_trainer_fighters_command(message):
@@ -770,13 +770,11 @@ def process_view_trainer_fighters(message):
     
     trainer_id = int(trainer_id_str)
     
-    # Get trainer info
     trainer = get_trainer_by_id(trainer_id)
     if not trainer:
         bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد.", reply_markup=trainer_fighter_management_menu())
         return
     
-    # Get fighters
     conn = get_db_connection()
     if conn is None:
         bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
@@ -805,7 +803,7 @@ def process_view_trainer_fighters(message):
 تخصص: {trainer['specialty']}
 شناسه: {trainer_id}
 
-⚠️ این مربی در حال حاضر شاگردی ندارد.
+این مربی در حال حاضر شاگردی ندارد.
             """
         else:
             response = f"""
@@ -823,28 +821,28 @@ def process_view_trainer_fighters(message):
             for fighter in fighters:
                 fighter_id, fighter_name, weight_class, fighter_status, start_date, end_date, training_status = fighter
                 
-                response += f"\n👤 {fighter_name}"
-                response += f"\n⚖️ رده وزنی: {weight_class}"
-                response += f"\n📊 وضعیت مبارز: {fighter_status}"
-                response += f"\n📅 شروع: {start_date}"
+                response += f"\n{fighter_name}"
+                response += f"\nرده وزنی: {weight_class}"
+                response += f"\nوضعیت مبارز: {fighter_status}"
+                response += f"\nشروع: {start_date}"
                 
                 if end_date:
-                    response += f"\n📅 پایان: {end_date}"
-                    response += f"\n📊 وضعیت آموزش: پایان یافته"
+                    response += f"\nپایان: {end_date}"
+                    response += f"\nوضعیت آموزش: پایان یافته"
                     inactive_count += 1
                 else:
-                    response += f"\n📅 پایان: -"
-                    response += f"\n📊 وضعیت آموزش: فعال"
+                    response += f"\nپایان: -"
+                    response += f"\nوضعیت آموزش: فعال"
                     active_count += 1
                 
-                response += f"\n🔗 شناسه مبارز: {fighter_id}"
-                response += f"\n{"-"*20}\n"
+                response += f"\nشناسه مبارز: {fighter_id}"
+                response += f"\n{"-"*40}\n"
             
             response += f"""
 آمار:
 شاگردان فعال: {active_count}
 شاگردان گذشته: {inactive_count}
-            """
+"""
         
         bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
         cur.close()
@@ -853,6 +851,8 @@ def process_view_trainer_fighters(message):
     finally:
         if conn:
             conn.close()
+
+# endregion
 
 @bot.message_handler(func=lambda message: message.text == 'مدیریت تعلیمات')
 @login_required
@@ -863,6 +863,10 @@ def manage_trainer_fighters_menu(message):
 لطفاً یکی از گزینه‌ها را انتخاب کنید:
 """
     bot.send_message(chat_id, welcome_text, reply_markup=trainer_fighter_management_menu())
+
+# endregion
+
+# endregion
 
 # region ------------------------ Start Handlers ------------------------
 
