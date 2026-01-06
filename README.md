@@ -14,9 +14,20 @@
 A comprehensive Telegram bot for managing fight club database, built with Python and PostgreSQL.
 This bot provides a complete CRUD interface for managing the club through an intuitive interface.
 </div>
+<br>
+<div align="center">
+<figure>
+<p><a href="https://www.youtube.com/watch?v=k1oPMaNEtQQ">
+<img src="preview.jpg" alt="Preview Video" width="400"/>
+<figcaption>Check out this preview video.</figcaption>
+</a></p>
+</figure>
+</div>
 
 ## ERD Diagram
-![ERD Diagram](DB_Fight-Club_ERD.png)
+<div align="center">
+<img src="erd.png" alt="ERD" width="700"/>
+</div>
 
 ## Built with
 - Python 3.8+
