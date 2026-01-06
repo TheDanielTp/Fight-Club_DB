@@ -945,6 +945,10 @@ def process_trainer_gym(message, full_name, specialty):
     chat_id = message.chat.id
     gym_name = message.text.strip() if message.text else None
 
+    if gym_name == "لغو عملیات":
+        cancel_process(message)
+        return
+
     if not gym_name:
         msg = bot.send_message(chat_id, "نام وارد شده معتبر نیست. لطفاً مجدداً تلاش کنید:")
         reply_markup = cancel_menu()
