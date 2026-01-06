@@ -349,9 +349,10 @@ def main_menu():
     button14 = types.KeyboardButton('ویرایش مربی')
     button15 = types.KeyboardButton('ویرایش رویداد')
     button16 = types.KeyboardButton('مدیریت تعلیمات')
-    button17 = types.KeyboardButton('خروج از سیستم')
+    button17 = types.KeyboardButton('حذف آیتم')
+    button18 = types.KeyboardButton('خروج از سیستم')
 
-    markup.add(button1, button2, button3, button4, button5, button6, button7, button8, button9, button10, button11, button12, button13, button14, button15, button16, button17)
+    markup.add(button1, button2, button3, button4, button5, button6, button7, button8, button9, button10, button11, button12, button13, button14, button15, button16, button17, button18)
     return markup
 
 def search_menu():
@@ -376,500 +377,15 @@ def trainer_fighter_management_menu():
     markup.add(button1, button2, button3, button4, button5)
     return markup
 
-# endregion
-
-# region ------------------- Fighter-Trainer Handlers -------------------
-
-# region ------ Add Fighter to Trainer Handler ------
-
-@bot.message_handler(func=lambda message: message.text == 'اضافه کردن مربی به مبارز')
-@login_required
-def assign_trainer_to_fighter_command(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً شناسه مبارز را وارد کنید:", reply_markup=cancel_menu())
-    bot.register_next_step_handler(msg, process_assign_fighter_id)
-
-def process_assign_fighter_id(message):
-    chat_id = message.chat.id
-    fighter_id_str = message.text.strip()
-    
-    if fighter_id_str == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if not fighter_id_str.isdigit():
-        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
-        bot.register_next_step_handler(msg, process_assign_fighter_id)
-        return
-    
-    fighter_id = int(fighter_id_str)
-    
-    fighter = get_fighter_by_id(fighter_id)
-    if not fighter:
-        msg = bot.send_message(chat_id, "مبارزی با این شناسه یافت نشد. لطفاً دوباره تلاش کنید:")
-        bot.register_next_step_handler(msg, process_assign_fighter_id)
-        return
-    
-    msg = bot.send_message(chat_id, "لطفاً شناسه مربی را وارد کنید:", reply_markup=cancel_menu())
-    bot.register_next_step_handler(msg, process_assign_trainer_id, fighter_id, fighter['name'])
-
-def process_assign_trainer_id(message, fighter_id, fighter_name):
-    chat_id = message.chat.id
-    trainer_id_str = message.text.strip()
-    
-    if trainer_id_str == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if not trainer_id_str.isdigit():
-        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
-        bot.register_next_step_handler(msg, process_assign_trainer_id, fighter_id, fighter_name)
-        return
-    
-    trainer_id = int(trainer_id_str)
-    
-    trainer = get_trainer_by_id(trainer_id)
-    if not trainer:
-        msg = bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد. لطفاً مجدداً وارد کنید:")
-        bot.register_next_step_handler(msg, process_assign_trainer_id, fighter_id, fighter_name)
-        return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT 1 FROM fighter_trainer 
-            WHERE fighter_id = %s AND trainer_id = %s AND end_date IS NULL
-        """, (fighter_id, trainer_id))
-        
-        if cur.fetchone():
-            bot.send_message(chat_id, "این مربی قبلاً به این مبارز اختصاص داده شده است.", reply_markup=trainer_fighter_management_menu())
-            return
-        
-        cur.close()
-        
-        msg = bot.send_message(chat_id, "تاریخ شروع همکاری را وارد کنید (فرمت: YYYY-MM-DD یا 'امروز' برای تاریخ امروز):", reply_markup=cancel_menu())
-        bot.register_next_step_handler(msg, process_assign_start_date, fighter_id, fighter_name, trainer_id, trainer['name'])
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در بررسی اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
-    finally:
-        if conn:
-            conn.close()
-
-def process_assign_start_date(message, fighter_id, fighter_name, trainer_id, trainer_name):
-    chat_id = message.chat.id
-    start_date_str = message.text.strip()
-    
-    if start_date_str == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if start_date_str.lower() in ['امروز', 'today']:
-        start_date = datetime.now().date()
-    else:
-        try:
-            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-        except ValueError:
-            msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD):")
-            bot.register_next_step_handler(msg, process_assign_start_date, fighter_id, fighter_name, trainer_id, trainer_name)
-            return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO fighter_trainer (fighter_id, trainer_id, start_date)
-            VALUES (%s, %s, %s)
-        """, (fighter_id, trainer_id, start_date))
-        
-        conn.commit()
-        
-        response = f"""
-مربی با موفقیت به مبارز اختصاص داده شد:
-
-مبارز: {fighter_name}
-مربی: {trainer_name}
-تاریخ شروع: {start_date}
-        """
-        
-        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در ثبت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
-    finally:
-        if conn:
-            conn.close()
-
-# endregion
-
-# region ---- Remove Fighter from Trainer Handler ---
-
-@bot.message_handler(func=lambda message: message.text == 'حذف مربی از مبارز')
-@login_required
-def remove_trainer_from_fighter_command(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً شناسه مبارز را وارد کنید:", reply_markup=cancel_menu())
-    bot.register_next_step_handler(msg, process_remove_fighter_id)
-
-def process_remove_fighter_id(message):
-    chat_id = message.chat.id
-    fighter_id_str = message.text.strip()
-    
-    if fighter_id_str == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if not fighter_id_str.isdigit():
-        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
-        bot.register_next_step_handler(msg, process_remove_fighter_id)
-        return
-    
-    fighter_id = int(fighter_id_str)
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT ft.trainer_id, t.name as trainer_name, ft.start_date
-            FROM fighter_trainer ft
-            JOIN trainer t ON ft.trainer_id = t.trainer_id
-            WHERE ft.fighter_id = %s AND ft.end_date IS NULL
-            ORDER BY t.name
-        """, (fighter_id,))
-        
-        trainers = cur.fetchall()
-        
-        if not trainers:
-            bot.send_message(chat_id, "این مبارز در حال حاضر مربی فعال ندارد.", reply_markup=trainer_fighter_management_menu())
-            return
-        
-        trainer_dict = {}
-        response = "مربیان فعال این مبارز:\n\n"
-        
-        for i, trainer in enumerate(trainers):
-            trainer_id, trainer_name, start_date = trainer
-            trainer_dict[str(i+1)] = {'trainer_id': trainer_id, 'trainer_name': trainer_name}
-            response += f"{i+1}. {trainer_name} (از {start_date})\n"
-        
-        response += "\nشماره مربی را برای حذف انتخاب کنید:"
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-        for i in range(len(trainers)):
-            markup.add(types.KeyboardButton(str(i+1)))
-        markup.add(types.KeyboardButton("لغو عملیات"))
-        
-        msg = bot.send_message(chat_id, response, reply_markup=markup)
-        bot.register_next_step_handler(msg, process_select_trainer_to_remove, fighter_id, trainer_dict)
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در دریافت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
-    finally:
-        if conn:
-            conn.close()
-
-def process_select_trainer_to_remove(message, fighter_id, trainer_dict):
-    chat_id = message.chat.id
-    choice = message.text.strip()
-    
-    if choice == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if choice not in trainer_dict:
-        msg = bot.send_message(chat_id, "انتخاب نامعتبر است. لطفاً مجدداً انتخاب کنید:")
-        bot.register_next_step_handler(msg, process_select_trainer_to_remove, fighter_id, trainer_dict)
-        return
-    
-    selected_trainer = trainer_dict[choice]
-    
-    msg = bot.send_message(chat_id, "تاریخ پایان همکاری را وارد کنید (فرمت: YYYY-MM-DD یا 'امروز' برای تاریخ امروز):", reply_markup=cancel_menu())
-    bot.register_next_step_handler(msg, process_remove_end_date, fighter_id, selected_trainer['trainer_id'], selected_trainer['trainer_name'])
-
-def process_remove_end_date(message, fighter_id, trainer_id, trainer_name):
-    chat_id = message.chat.id
-    end_date_str = message.text.strip()
-    
-    if end_date_str == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if end_date_str.lower() in ['امروز', 'today']:
-        end_date = datetime.now().date()
-    else:
-        try:
-            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
-        except ValueError:
-            msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD):")
-            bot.register_next_step_handler(msg, process_remove_end_date, fighter_id, trainer_id, trainer_name)
-            return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE fighter_trainer 
-            SET end_date = %s 
-            WHERE fighter_id = %s AND trainer_id = %s AND end_date IS NULL
-        """, (end_date, fighter_id, trainer_id))
-        
-        conn.commit()
-        
-        response = f"""
-مربی با موفقیت از مبارز حذف شد:
-
-مبارز: {fighter_id}
-مربی: {trainer_name}
-تاریخ پایان: {end_date}
-        """
-        
-        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در به‌روزرسانی اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
-    finally:
-        if conn:
-            conn.close()
-
-# endregion
-
-# region -------- Display Fighter's Trainers --------
-
-@bot.message_handler(func=lambda message: message.text == 'مشاهده مربیان یک مبارز')
-@login_required
-def view_fighter_trainers_command(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً شناسه مبارز را وارد کنید:", reply_markup=cancel_menu())
-    bot.register_next_step_handler(msg, process_view_fighter_trainers)
-
-def process_view_fighter_trainers(message):
-    chat_id = message.chat.id
-    fighter_id_str = message.text.strip()
-    
-    if fighter_id_str == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if not fighter_id_str.isdigit():
-        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
-        bot.register_next_step_handler(msg, process_view_fighter_trainers)
-        return
-    
-    fighter_id = int(fighter_id_str)
-    
-    fighter = get_fighter_by_id(fighter_id)
-    if not fighter:
-        bot.send_message(chat_id, "مبارزی با این شناسه یافت نشد.", reply_markup=trainer_fighter_management_menu())
-        return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT t.trainer_id, t.name as trainer_name, t.specialty,
-                   ft.start_date, ft.end_date,
-                   CASE 
-                     WHEN ft.end_date IS NULL THEN 'فعال'
-                     ELSE 'پایان یافته'
-                   END as status
-            FROM fighter_trainer ft
-            JOIN trainer t ON ft.trainer_id = t.trainer_id
-            WHERE ft.fighter_id = %s
-            ORDER BY ft.end_date IS NULL DESC, ft.start_date DESC
-        """, (fighter_id,))
-        
-        trainers = cur.fetchall()
-        
-        if not trainers:
-            response = f"""
-مبارز: {fighter['name']}
-شناسه: {fighter_id}
-
-این مبارز در حال حاضر مربی ندارد.
-            """
-        else:
-            response = f"""
-مبارز: {fighter['name']}
-شناسه: {fighter_id}
-
-مربیان:
-{"="*30}
-            """
-            
-            active_count = 0
-            inactive_count = 0
-            
-            for trainer in trainers:
-                trainer_id, trainer_name, specialty, start_date, end_date, status = trainer
-                
-                response += f"\n{trainer_name}"
-                response += f"\nتخصص: {specialty}"
-                response += f"\nشروع: {start_date}"
-            
-                if end_date:
-                    response += f"\nپایان: {end_date}"
-                    response += f"\nوضعیت: پایان یافته"
-                    inactive_count += 1
-                else:
-                    response += f"\nپایان: -"
-                    response += f"\nوضعیت: فعال"
-                    active_count += 1
-                
-                response += f"\nشناسه مربی: {trainer_id}"
-                response += f"\n{"-"*40}\n"
-            
-            response += f"""
-آمار:
-مربیان فعال: {active_count}
-مربیان گذشته: {inactive_count}
-            """
-        
-        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در دریافت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
-    finally:
-        if conn:
-            conn.close()
-
-# endregion
-
-# region -------- Display Trainer's Fighters --------
-
-@bot.message_handler(func=lambda message: message.text == 'مشاهده شاگردان یک مربی')
-@login_required
-def view_trainer_fighters_command(message):
-    chat_id = message.chat.id
-    msg = bot.send_message(chat_id, "لطفاً شناسه مربی را وارد کنید:", reply_markup=cancel_menu())
-    bot.register_next_step_handler(msg, process_view_trainer_fighters)
-
-def process_view_trainer_fighters(message):
-    chat_id = message.chat.id
-    trainer_id_str = message.text.strip()
-    
-    if trainer_id_str == "لغو عملیات":
-        cancel_process(message)
-        return
-    
-    if not trainer_id_str.isdigit():
-        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
-        bot.register_next_step_handler(msg, process_view_trainer_fighters)
-        return
-    
-    trainer_id = int(trainer_id_str)
-    
-    trainer = get_trainer_by_id(trainer_id)
-    if not trainer:
-        bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد.", reply_markup=trainer_fighter_management_menu())
-        return
-    
-    conn = get_db_connection()
-    if conn is None:
-        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
-        return
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT f.fighter_id, f.name as fighter_name, f.weight_class,
-                   f.status as fighter_status, ft.start_date, ft.end_date,
-                   CASE 
-                     WHEN ft.end_date IS NULL THEN 'فعال'
-                     ELSE 'پایان یافته'
-                   END as training_status
-            FROM fighter_trainer ft
-            JOIN fighter f ON ft.fighter_id = f.fighter_id
-            WHERE ft.trainer_id = %s
-            ORDER BY ft.end_date IS NULL DESC, ft.start_date DESC
-        """, (trainer_id,))
-        
-        fighters = cur.fetchall()
-        
-        if not fighters:
-            response = f"""
-مربی: {trainer['name']}
-تخصص: {trainer['specialty']}
-شناسه: {trainer_id}
-
-این مربی در حال حاضر شاگردی ندارد.
-            """
-        else:
-            response = f"""
-مربی: {trainer['name']}
-تخصص: {trainer['specialty']}
-شناسه: {trainer_id}
-
-شاگردان:
-{"="*30}
-            """
-            
-            active_count = 0
-            inactive_count = 0
-            
-            for fighter in fighters:
-                fighter_id, fighter_name, weight_class, fighter_status, start_date, end_date, training_status = fighter
-                
-                response += f"\n{fighter_name}"
-                response += f"\nرده وزنی: {weight_class}"
-                response += f"\nوضعیت مبارز: {fighter_status}"
-                response += f"\nشروع: {start_date}"
-                
-                if end_date:
-                    response += f"\nپایان: {end_date}"
-                    response += f"\nوضعیت آموزش: پایان یافته"
-                    inactive_count += 1
-                else:
-                    response += f"\nپایان: -"
-                    response += f"\nوضعیت آموزش: فعال"
-                    active_count += 1
-                
-                response += f"\nشناسه مبارز: {fighter_id}"
-                response += f"\n{"-"*40}\n"
-            
-            response += f"""
-آمار:
-شاگردان فعال: {active_count}
-شاگردان گذشته: {inactive_count}
-"""
-        
-        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
-        cur.close()
-    except Error as e:
-        bot.send_message(chat_id, f"خطا در دریافت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
-    finally:
-        if conn:
-            conn.close()
-
-# endregion
-
-@bot.message_handler(func=lambda message: message.text == 'مدیریت تعلیمات')
-@login_required
-def manage_trainer_fighters_menu(message):
-    chat_id = message.chat.id
-    welcome_text = """
-مدیریت شاگردان مربی
-لطفاً یکی از گزینه‌ها را انتخاب کنید:
-"""
-    bot.send_message(chat_id, welcome_text, reply_markup=trainer_fighter_management_menu())
+def delete_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton('حذف مبارز'),
+               types.KeyboardButton('حذف مربی'),
+               types.KeyboardButton('حذف باشگاه'),
+               types.KeyboardButton('حذف رویداد'),
+               types.KeyboardButton('بازگشت به منوی اصلی'),
+               types.KeyboardButton('لغو عملیات'))
+    return markup
 
 # endregion
 
@@ -2631,6 +2147,804 @@ def process_event_update_confirmation(message, event_id, field_name, new_value):
             conn.close()
 
 # endregion
+
+# endregion
+
+# region ------------------- Fighter-Trainer Handlers -------------------
+
+# region ------ Add Fighter to Trainer Handler ------
+
+@bot.message_handler(func=lambda message: message.text == 'اضافه کردن مربی به مبارز')
+@login_required
+def assign_trainer_to_fighter_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه مبارز را وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_assign_fighter_id)
+
+def process_assign_fighter_id(message):
+    chat_id = message.chat.id
+    fighter_id_str = message.text.strip()
+    
+    if fighter_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not fighter_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_assign_fighter_id)
+        return
+    
+    fighter_id = int(fighter_id_str)
+    
+    fighter = get_fighter_by_id(fighter_id)
+    if not fighter:
+        msg = bot.send_message(chat_id, "مبارزی با این شناسه یافت نشد. لطفاً دوباره تلاش کنید:")
+        bot.register_next_step_handler(msg, process_assign_fighter_id)
+        return
+    
+    msg = bot.send_message(chat_id, "لطفاً شناسه مربی را وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_assign_trainer_id, fighter_id, fighter['name'])
+
+def process_assign_trainer_id(message, fighter_id, fighter_name):
+    chat_id = message.chat.id
+    trainer_id_str = message.text.strip()
+    
+    if trainer_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not trainer_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_assign_trainer_id, fighter_id, fighter_name)
+        return
+    
+    trainer_id = int(trainer_id_str)
+    
+    trainer = get_trainer_by_id(trainer_id)
+    if not trainer:
+        msg = bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد. لطفاً مجدداً وارد کنید:")
+        bot.register_next_step_handler(msg, process_assign_trainer_id, fighter_id, fighter_name)
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT 1 FROM fighter_trainer 
+            WHERE fighter_id = %s AND trainer_id = %s AND end_date IS NULL
+        """, (fighter_id, trainer_id))
+        
+        if cur.fetchone():
+            bot.send_message(chat_id, "این مربی قبلاً به این مبارز اختصاص داده شده است.", reply_markup=trainer_fighter_management_menu())
+            return
+        
+        cur.close()
+        
+        msg = bot.send_message(chat_id, "تاریخ شروع همکاری را وارد کنید (فرمت: YYYY-MM-DD یا 'امروز' برای تاریخ امروز):", reply_markup=cancel_menu())
+        bot.register_next_step_handler(msg, process_assign_start_date, fighter_id, fighter_name, trainer_id, trainer['name'])
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در بررسی اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
+    finally:
+        if conn:
+            conn.close()
+
+def process_assign_start_date(message, fighter_id, fighter_name, trainer_id, trainer_name):
+    chat_id = message.chat.id
+    start_date_str = message.text.strip()
+    
+    if start_date_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if start_date_str.lower() in ['امروز', 'today']:
+        start_date = datetime.now().date()
+    else:
+        try:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD):")
+            bot.register_next_step_handler(msg, process_assign_start_date, fighter_id, fighter_name, trainer_id, trainer_name)
+            return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO fighter_trainer (fighter_id, trainer_id, start_date)
+            VALUES (%s, %s, %s)
+        """, (fighter_id, trainer_id, start_date))
+        
+        conn.commit()
+        
+        response = f"""
+مربی با موفقیت به مبارز اختصاص داده شد:
+
+مبارز: {fighter_name}
+مربی: {trainer_name}
+تاریخ شروع: {start_date}
+        """
+        
+        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در ثبت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
+
+# region ---- Remove Fighter from Trainer Handler ---
+
+@bot.message_handler(func=lambda message: message.text == 'حذف مربی از مبارز')
+@login_required
+def remove_trainer_from_fighter_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه مبارز را وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_remove_fighter_id)
+
+def process_remove_fighter_id(message):
+    chat_id = message.chat.id
+    fighter_id_str = message.text.strip()
+    
+    if fighter_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not fighter_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_remove_fighter_id)
+        return
+    
+    fighter_id = int(fighter_id_str)
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT ft.trainer_id, t.name as trainer_name, ft.start_date
+            FROM fighter_trainer ft
+            JOIN trainer t ON ft.trainer_id = t.trainer_id
+            WHERE ft.fighter_id = %s AND ft.end_date IS NULL
+            ORDER BY t.name
+        """, (fighter_id,))
+        
+        trainers = cur.fetchall()
+        
+        if not trainers:
+            bot.send_message(chat_id, "این مبارز در حال حاضر مربی فعال ندارد.", reply_markup=trainer_fighter_management_menu())
+            return
+        
+        trainer_dict = {}
+        response = "مربیان فعال این مبارز:\n\n"
+        
+        for i, trainer in enumerate(trainers):
+            trainer_id, trainer_name, start_date = trainer
+            trainer_dict[str(i+1)] = {'trainer_id': trainer_id, 'trainer_name': trainer_name}
+            response += f"{i+1}. {trainer_name} (از {start_date})\n"
+        
+        response += "\nشماره مربی را برای حذف انتخاب کنید:"
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+        for i in range(len(trainers)):
+            markup.add(types.KeyboardButton(str(i+1)))
+        markup.add(types.KeyboardButton("لغو عملیات"))
+        
+        msg = bot.send_message(chat_id, response, reply_markup=markup)
+        bot.register_next_step_handler(msg, process_select_trainer_to_remove, fighter_id, trainer_dict)
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در دریافت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
+    finally:
+        if conn:
+            conn.close()
+
+def process_select_trainer_to_remove(message, fighter_id, trainer_dict):
+    chat_id = message.chat.id
+    choice = message.text.strip()
+    
+    if choice == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if choice not in trainer_dict:
+        msg = bot.send_message(chat_id, "انتخاب نامعتبر است. لطفاً مجدداً انتخاب کنید:")
+        bot.register_next_step_handler(msg, process_select_trainer_to_remove, fighter_id, trainer_dict)
+        return
+    
+    selected_trainer = trainer_dict[choice]
+    
+    msg = bot.send_message(chat_id, "تاریخ پایان همکاری را وارد کنید (فرمت: YYYY-MM-DD یا 'امروز' برای تاریخ امروز):", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_remove_end_date, fighter_id, selected_trainer['trainer_id'], selected_trainer['trainer_name'])
+
+def process_remove_end_date(message, fighter_id, trainer_id, trainer_name):
+    chat_id = message.chat.id
+    end_date_str = message.text.strip()
+    
+    if end_date_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if end_date_str.lower() in ['امروز', 'today']:
+        end_date = datetime.now().date()
+    else:
+        try:
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            msg = bot.send_message(chat_id, "فرمت تاریخ اشتباه است. لطفاً مجدداً وارد کنید (فرمت: YYYY-MM-DD):")
+            bot.register_next_step_handler(msg, process_remove_end_date, fighter_id, trainer_id, trainer_name)
+            return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE fighter_trainer 
+            SET end_date = %s 
+            WHERE fighter_id = %s AND trainer_id = %s AND end_date IS NULL
+        """, (end_date, fighter_id, trainer_id))
+        
+        conn.commit()
+        
+        response = f"""
+مربی با موفقیت از مبارز حذف شد:
+
+مبارز: {fighter_id}
+مربی: {trainer_name}
+تاریخ پایان: {end_date}
+        """
+        
+        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در به‌روزرسانی اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
+
+# region -------- Display Fighter's Trainers --------
+
+@bot.message_handler(func=lambda message: message.text == 'مشاهده مربیان یک مبارز')
+@login_required
+def view_fighter_trainers_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه مبارز را وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_view_fighter_trainers)
+
+def process_view_fighter_trainers(message):
+    chat_id = message.chat.id
+    fighter_id_str = message.text.strip()
+    
+    if fighter_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not fighter_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_view_fighter_trainers)
+        return
+    
+    fighter_id = int(fighter_id_str)
+    
+    fighter = get_fighter_by_id(fighter_id)
+    if not fighter:
+        bot.send_message(chat_id, "مبارزی با این شناسه یافت نشد.", reply_markup=trainer_fighter_management_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.trainer_id, t.name as trainer_name, t.specialty,
+                   ft.start_date, ft.end_date,
+                   CASE 
+                     WHEN ft.end_date IS NULL THEN 'فعال'
+                     ELSE 'پایان یافته'
+                   END as status
+            FROM fighter_trainer ft
+            JOIN trainer t ON ft.trainer_id = t.trainer_id
+            WHERE ft.fighter_id = %s
+            ORDER BY ft.end_date IS NULL DESC, ft.start_date DESC
+        """, (fighter_id,))
+        
+        trainers = cur.fetchall()
+        
+        if not trainers:
+            response = f"""
+مبارز: {fighter['name']}
+شناسه: {fighter_id}
+
+این مبارز در حال حاضر مربی ندارد.
+            """
+        else:
+            response = f"""
+مبارز: {fighter['name']}
+شناسه: {fighter_id}
+
+مربیان:
+{"="*30}
+            """
+            
+            active_count = 0
+            inactive_count = 0
+            
+            for trainer in trainers:
+                trainer_id, trainer_name, specialty, start_date, end_date, status = trainer
+                
+                response += f"\n{trainer_name}"
+                response += f"\nتخصص: {specialty}"
+                response += f"\nشروع: {start_date}"
+            
+                if end_date:
+                    response += f"\nپایان: {end_date}"
+                    response += f"\nوضعیت: پایان یافته"
+                    inactive_count += 1
+                else:
+                    response += f"\nپایان: -"
+                    response += f"\nوضعیت: فعال"
+                    active_count += 1
+                
+                response += f"\nشناسه مربی: {trainer_id}"
+                response += f"\n{"-"*40}\n"
+            
+            response += f"""
+آمار:
+مربیان فعال: {active_count}
+مربیان گذشته: {inactive_count}
+            """
+        
+        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در دریافت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
+
+# region -------- Display Trainer's Fighters --------
+
+@bot.message_handler(func=lambda message: message.text == 'مشاهده شاگردان یک مربی')
+@login_required
+def view_trainer_fighters_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه مربی را وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_view_trainer_fighters)
+
+def process_view_trainer_fighters(message):
+    chat_id = message.chat.id
+    trainer_id_str = message.text.strip()
+    
+    if trainer_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not trainer_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_view_trainer_fighters)
+        return
+    
+    trainer_id = int(trainer_id_str)
+    
+    trainer = get_trainer_by_id(trainer_id)
+    if not trainer:
+        bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد.", reply_markup=trainer_fighter_management_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.")
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT f.fighter_id, f.name as fighter_name, f.weight_class,
+                   f.status as fighter_status, ft.start_date, ft.end_date,
+                   CASE 
+                     WHEN ft.end_date IS NULL THEN 'فعال'
+                     ELSE 'پایان یافته'
+                   END as training_status
+            FROM fighter_trainer ft
+            JOIN fighter f ON ft.fighter_id = f.fighter_id
+            WHERE ft.trainer_id = %s
+            ORDER BY ft.end_date IS NULL DESC, ft.start_date DESC
+        """, (trainer_id,))
+        
+        fighters = cur.fetchall()
+        
+        if not fighters:
+            response = f"""
+مربی: {trainer['name']}
+تخصص: {trainer['specialty']}
+شناسه: {trainer_id}
+
+این مربی در حال حاضر شاگردی ندارد.
+            """
+        else:
+            response = f"""
+مربی: {trainer['name']}
+تخصص: {trainer['specialty']}
+شناسه: {trainer_id}
+
+شاگردان:
+{"="*30}
+            """
+            
+            active_count = 0
+            inactive_count = 0
+            
+            for fighter in fighters:
+                fighter_id, fighter_name, weight_class, fighter_status, start_date, end_date, training_status = fighter
+                
+                response += f"\n{fighter_name}"
+                response += f"\nرده وزنی: {weight_class}"
+                response += f"\nوضعیت مبارز: {fighter_status}"
+                response += f"\nشروع: {start_date}"
+                
+                if end_date:
+                    response += f"\nپایان: {end_date}"
+                    response += f"\nوضعیت آموزش: پایان یافته"
+                    inactive_count += 1
+                else:
+                    response += f"\nپایان: -"
+                    response += f"\nوضعیت آموزش: فعال"
+                    active_count += 1
+                
+                response += f"\nشناسه مبارز: {fighter_id}"
+                response += f"\n{"-"*40}\n"
+            
+            response += f"""
+آمار:
+شاگردان فعال: {active_count}
+شاگردان گذشته: {inactive_count}
+"""
+        
+        bot.send_message(chat_id, response, reply_markup=trainer_fighter_management_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در دریافت اطلاعات: {e}", reply_markup=trainer_fighter_management_menu())
+    finally:
+        if conn:
+            conn.close()
+
+# endregion
+
+@bot.message_handler(func=lambda message: message.text == 'مدیریت تعلیمات')
+@login_required
+def manage_trainer_fighters_menu(message):
+    chat_id = message.chat.id
+    welcome_text = """
+مدیریت شاگردان مربی
+لطفاً یکی از گزینه‌ها را انتخاب کنید:
+"""
+    bot.send_message(chat_id, welcome_text, reply_markup=trainer_fighter_management_menu())
+
+# endregion
+
+# region --------------------- Delete Item Handlers ---------------------
+
+@bot.message_handler(func=lambda message: message.text == 'حذف آیتم')
+@login_required
+def delete_item_menu(message):
+    chat_id = message.chat.id
+    response = "لطفاً نوع آیتمی که می‌خواهید حذف کنید را انتخاب کنید:"
+    bot.send_message(chat_id, response, reply_markup=delete_menu())
+
+@bot.message_handler(func=lambda message: message.text == 'حذف مبارز')
+@login_required
+def delete_fighter_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه مبارز را برای حذف وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_delete_fighter_id)
+
+def process_delete_fighter_id(message):
+    chat_id = message.chat.id
+    fighter_id_str = message.text.strip()
+    
+    if fighter_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not fighter_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_delete_fighter_id)
+        return
+    
+    fighter_id = int(fighter_id_str)
+    
+    fighter = get_fighter_by_id(fighter_id)
+    if not fighter:
+        bot.send_message(chat_id, "مبارزی با این شناسه یافت نشد.", reply_markup=delete_menu())
+        return
+    
+    response = f"اطلاعات مبارز مورد نظر: نام: {fighter['name']} شناسه: {fighter_id} رده وزنی: {fighter['weight_class']} سن: {fighter['age']} وضعیت: {fighter['status']} باشگاه: {fighter['gym_name'] or 'ثبت نشده'} آیا مطمئن هستید که می‌خواهید این مبارز را حذف کنید؟"
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("بله، حذف کن"), types.KeyboardButton("خیر، لغو کن"), types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
+    bot.register_next_step_handler(msg, confirm_delete_fighter, fighter_id)
+
+def confirm_delete_fighter(message, fighter_id):
+    chat_id = message.chat.id
+    confirmation = message.text.strip()
+    
+    if confirmation in ["خیر، لغو کن", "لغو عملیات"]:
+        bot.send_message(chat_id, "حذف لغو شد.", reply_markup=delete_menu())
+        return
+    
+    if confirmation != "بله، حذف کن":
+        bot.send_message(chat_id, "دستور نامعتبر.", reply_markup=delete_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=delete_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM fighter WHERE fighter_id = %s", (fighter_id,))
+        conn.commit()
+        bot.send_message(chat_id, f"مبارز با شناسه {fighter_id} با موفقیت حذف شد.", reply_markup=delete_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در حذف مبارز: {e}", reply_markup=delete_menu())
+    finally:
+        if conn:
+            conn.close()
+
+@bot.message_handler(func=lambda message: message.text == 'حذف مربی')
+@login_required
+def delete_trainer_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه مربی را برای حذف وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_delete_trainer_id)
+
+def process_delete_trainer_id(message):
+    chat_id = message.chat.id
+    trainer_id_str = message.text.strip()
+    
+    if trainer_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not trainer_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_delete_trainer_id)
+        return
+    
+    trainer_id = int(trainer_id_str)
+    
+    trainer = get_trainer_by_id(trainer_id)
+    if not trainer:
+        bot.send_message(chat_id, "مربی‌ای با این شناسه یافت نشد.", reply_markup=delete_menu())
+        return
+    
+    response = f"اطلاعات مربی مورد نظر: نام: {trainer['name']} شناسه: {trainer_id} تخصص: {trainer['specialty']} باشگاه: {trainer['gym_name'] or 'ثبت نشده'} آیا مطمئن هستید که می‌خواهید این مربی را حذف کنید؟"
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("بله، حذف کن"), types.KeyboardButton("خیر، لغو کن"), types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
+    bot.register_next_step_handler(msg, confirm_delete_trainer, trainer_id)
+
+def confirm_delete_trainer(message, trainer_id):
+    chat_id = message.chat.id
+    confirmation = message.text.strip()
+    
+    if confirmation in ["خیر، لغو کن", "لغو عملیات"]:
+        bot.send_message(chat_id, "حذف لغو شد.", reply_markup=delete_menu())
+        return
+    
+    if confirmation != "بله، حذف کن":
+        bot.send_message(chat_id, "دستور نامعتبر.", reply_markup=delete_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=delete_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM trainer WHERE trainer_id = %s", (trainer_id,))
+        conn.commit()
+        bot.send_message(chat_id, f"مربی با شناسه {trainer_id} با موفقیت حذف شد.", reply_markup=delete_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در حذف مربی: {e}", reply_markup=delete_menu())
+    finally:
+        if conn:
+            conn.close()
+
+@bot.message_handler(func=lambda message: message.text == 'حذف باشگاه')
+@login_required
+def delete_gym_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه باشگاه را برای حذف وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_delete_gym_id)
+
+def process_delete_gym_id(message):
+    chat_id = message.chat.id
+    gym_id_str = message.text.strip()
+    
+    if gym_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not gym_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_delete_gym_id)
+        return
+    
+    gym_id = int(gym_id_str)
+    
+    gym = get_gym_by_id(gym_id)
+    if not gym:
+        bot.send_message(chat_id, "باشگاهی با این شناسه یافت نشد.", reply_markup=delete_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=delete_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM fighter WHERE gym_id = %s", (gym_id,))
+        fighter_count = cur.fetchone()[0] # type: ignore
+        
+        cur.execute("SELECT COUNT(*) FROM trainer WHERE gym_id = %s", (gym_id,))
+        trainer_count = cur.fetchone()[0] # type: ignore
+        
+        response = f"اطلاعات باشگاه مورد نظر: نام: {gym['name']} شناسه: {gym_id} مکان: {gym['location']} مالک: {gym['owner']} امتیاز شهرت: {gym['reputation_score']} تعداد مبارزین: {fighter_count} تعداد مربیان: {trainer_count} آیا مطمئن هستید که می‌خواهید این باشگاه را حذف کنید؟"
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add(types.KeyboardButton("بله، حذف کن"), types.KeyboardButton("خیر، لغو کن"), types.KeyboardButton("لغو عملیات"))
+        
+        msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
+        bot.register_next_step_handler(msg, confirm_delete_gym, gym_id, fighter_count, trainer_count)
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در دریافت اطلاعات: {e}", reply_markup=delete_menu())
+    finally:
+        if conn:
+            conn.close()
+
+def confirm_delete_gym(message, gym_id, fighter_count, trainer_count):
+    chat_id = message.chat.id
+    confirmation = message.text.strip()
+    
+    if confirmation in ["خیر، لغو کن", "لغو عملیات"]:
+        bot.send_message(chat_id, "حذف لغو شد.", reply_markup=delete_menu())
+        return
+    
+    if confirmation != "بله، حذف کن":
+        bot.send_message(chat_id, "دستور نامعتبر.", reply_markup=delete_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=delete_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE fighter SET gym_id = NULL WHERE gym_id = %s", (gym_id,))
+        fighters_updated = cur.rowcount
+        
+        cur.execute("UPDATE trainer SET gym_id = NULL WHERE gym_id = %s", (gym_id,))
+        trainers_updated = cur.rowcount
+        
+        cur.execute("DELETE FROM gym WHERE gym_id = %s", (gym_id,))
+        
+        conn.commit()
+        
+        response = f"باشگاه با شناسه {gym_id} با موفقیت حذف شد. باشگاه {fighters_updated} مبارز روی NULL تنظیم شد. باشگاه {trainers_updated} مربی روی NULL تنظیم شد."
+        
+        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=delete_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در حذف باشگاه: {e}", reply_markup=delete_menu())
+    finally:
+        if conn:
+            conn.close()
+
+@bot.message_handler(func=lambda message: message.text == 'حذف رویداد')
+@login_required
+def delete_event_command(message):
+    chat_id = message.chat.id
+    msg = bot.send_message(chat_id, "لطفاً شناسه رویداد را برای حذف وارد کنید:", reply_markup=cancel_menu())
+    bot.register_next_step_handler(msg, process_delete_event_id)
+
+def process_delete_event_id(message):
+    chat_id = message.chat.id
+    event_id_str = message.text.strip()
+    
+    if event_id_str == "لغو عملیات":
+        cancel_process(message)
+        return
+    
+    if not event_id_str.isdigit():
+        msg = bot.send_message(chat_id, "شناسه نامعتبر است. لطفاً عدد وارد کنید:")
+        bot.register_next_step_handler(msg, process_delete_event_id)
+        return
+    
+    event_id = int(event_id_str)
+    
+    event = get_event_by_id(event_id)
+    if not event:
+        bot.send_message(chat_id, "رویدادی با این شناسه یافت نشد.", reply_markup=delete_menu())
+        return
+    
+    response = f"اطلاعات رویداد مورد نظر: شناسه رویداد: {event_id} تاریخ: {event['start_date'].strftime('%Y-%m-%d %H:%M')} مکان: {event['location']} مبارزین: {event['fighter1_name']} vs {event['fighter2_name']} نتیجه: {event['fighter1_name']} ({event['fighter1_result']}) - {event['fighter2_name']} ({event['fighter2_result']}) آیا مطمئن هستید که می‌خواهید این رویداد را حذف کنید؟"
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(types.KeyboardButton("بله، حذف کن"), types.KeyboardButton("خیر، لغو کن"), types.KeyboardButton("لغو عملیات"))
+    
+    msg = bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=markup)
+    bot.register_next_step_handler(msg, confirm_delete_event, event_id)
+
+def confirm_delete_event(message, event_id):
+    chat_id = message.chat.id
+    confirmation = message.text.strip()
+    
+    if confirmation in ["خیر، لغو کن", "لغو عملیات"]:
+        bot.send_message(chat_id, "حذف لغو شد.", reply_markup=delete_menu())
+        return
+    
+    if confirmation != "بله، حذف کن":
+        bot.send_message(chat_id, "دستور نامعتبر.", reply_markup=delete_menu())
+        return
+    
+    conn = get_db_connection()
+    if conn is None:
+        bot.send_message(chat_id, "خطا در اتصال به پایگاه داده.", reply_markup=delete_menu())
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM participants WHERE match_id = %s", (event_id,))
+        participants_deleted = cur.rowcount
+        
+        cur.execute("DELETE FROM match_event WHERE match_id = %s", (event_id,))
+        
+        conn.commit()
+        
+        response = f"رویداد با شناسه {event_id} با موفقیت حذف شد. اطلاعات شرکت {participants_deleted} مبارز در رویداد حذف شد."
+        
+        bot.send_message(chat_id, response, parse_mode='Markdown', reply_markup=delete_menu())
+        cur.close()
+    except Error as e:
+        bot.send_message(chat_id, f"خطا در حذف رویداد: {e}", reply_markup=delete_menu())
+    finally:
+        if conn:
+            conn.close()
 
 # endregion
 
