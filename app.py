@@ -854,7 +854,7 @@ def process_view_trainer_fighters(message):
         if conn:
             conn.close()
 
-@bot.message_handler(func=lambda message: message.text == 'مدیریت شاگردان مربی')
+@bot.message_handler(func=lambda message: message.text == 'مدیریت تعلیمات')
 @login_required
 def manage_trainer_fighters_menu(message):
     chat_id = message.chat.id
