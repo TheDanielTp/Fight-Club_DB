@@ -29,7 +29,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/TheDanielTp/DB_Fight-Club">
-    <img src="logo-pink.png" alt="Logo" width="150" height="150">
+    <img src="images/logo-pink.png" alt="Logo" width="150" height="150">
   </a>
 
   <h3 align="center">Gentlemen, welcome to Fight Club!</h3>
@@ -59,7 +59,7 @@ This bot provides a complete CRUD interface for managing the club through an int
 <div align="center">
 <figure>
 <p><a href="https://www.youtube.com/watch?v=k1oPMaNEtQQ">
-<img src="preview.jpg" alt="Preview Video" width="400"/>
+<img src="images/preview.jpg" alt="Preview Video" width="400"/>
 <figcaption>Check out this preview video.</figcaption>
 </a></p>
 </figure>
