@@ -42,7 +42,7 @@
 
 ## ERD Diagram
 <div align="center">
-<img src="erd.png" alt="ERD" width="700"/>
+<img src="images/erd.png" alt="ERD" width="700"/>
 </div>
 
 ## Built with
